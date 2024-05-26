@@ -7,10 +7,12 @@ mod editor;
 
 pub fn main() {
     let mut editor = Editor::new().unwrap();
-    editor.run().map_err(|e| {
-        stdout().queue(LeaveAlternateScreen).unwrap();
-        stdout().flush().unwrap();
-        terminal::disable_raw_mode().unwrap();
-        e
-    }).unwrap();
+    match editor.run() {
+        Ok(()) => {
+            stdout().queue(LeaveAlternateScreen).unwrap();
+            stdout().flush().unwrap();
+            terminal::disable_raw_mode().unwrap();
+        },
+        e => e.unwrap(),
+    }
 }

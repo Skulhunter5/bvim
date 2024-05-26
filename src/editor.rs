@@ -23,16 +23,25 @@ pub(crate) struct Editor {
     width: u16,
     height: u16,
     terminate: bool,
+    text: Vec<String>,
+    col: usize,
+    row: usize,
 }
 
 impl Editor {
     pub fn new() -> Result<Self> {
         let (width, height) = terminal::size()?;
+
+        let text = vec![String::new()];
+
         Ok(Self {
             mode: Mode::Normal,
             width,
             height,
             terminate: false,
+            text,
+            col: 0,
+            row: 0,
         })
     }
 
@@ -57,17 +66,14 @@ impl Editor {
                     Event::Key { 0: key_event } => {
                         self.handle_key(key_event)?;
                     },
-                    Event::Resize {
-                        0: width,
-                        1: height,
-                    } => {
+                    Event::Resize { 0: width, 1: height } => {
                         self.width = width;
                         self.height = height;
                         println!("Resized: {}x{}", width, height);
                     },
                     e => {
                         println!("unhandled event: {:?}", e);
-                    }
+                    },
                 }
             }
 
@@ -95,8 +101,8 @@ impl Editor {
                         },
                         KeyCode::Char('i') => {
                             self.change_mode(Mode::Insert)?;
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     }
                 }
             },
@@ -105,32 +111,78 @@ impl Editor {
                     match event.code {
                         KeyCode::Esc => {
                             self.change_mode(Mode::Normal)?;
-                        }
+                        },
                         KeyCode::Backspace => {
-                            let (x, y) = position()?;
-                            stdout.queue(MoveTo(x - 1, y))?;
-                            stdout.queue(Print(' '))?;
-                            stdout.queue(MoveTo(x - 1, y))?;
-                        }
-                        KeyCode::Char(c) => {
-                            if event.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' {
-                                self.change_mode(Mode::Normal)?;
-                            } else {
-                                stdout.queue(Print(c))?;
+                            if self.col > 0 {
+                                self.text[self.row].pop();
+                                self.col -= 1;
+                                self.move_to_current_position()?;
+                                stdout.queue(Print(' '))?;
+                                self.move_to_current_position()?;
                             }
                         },
-                        _ => {}
+                        KeyCode::Enter => {
+                            if self.row < self.height as usize - 3 {
+                                self.row += 1;
+                                self.col = 0;
+                                self.text.push(String::new());
+                                self.move_to_current_position()?;
+                            }
+                        },
+                        KeyCode::Up => {
+                            self.move_up()?;
+                        },
+                        KeyCode::Down => {
+                            self.move_down()?;
+                        },
+                        KeyCode::Char(c) => {
+                            if event.modifiers.contains(KeyModifiers::CONTROL) {
+                                match c {
+                                    'c' => {
+                                        self.change_mode(Mode::Normal)?;
+                                    },
+                                    _ => {},
+                                }
+                            } else {
+                                if self.col < self.width as usize {
+                                    stdout.queue(Print(c))?;
+                                    self.text[self.row].push(c);
+                                    self.col += 1;
+                                }
+                            }
+                        },
+                        _ => {},
                     }
                 }
             }
         }
+
+        Ok(())
+    }
+
+    fn move_up(&mut self) -> Result<()> {
+        if self.row > 0 {
+            self.row -= 1;
+            self.col = self.text[self.row].len();
+            self.move_to_current_position()?;
+        }
+
+        Ok(())
+    }
+
+    fn move_down(&mut self) -> Result<()> {
+        if self.row < self.height as usize - 3 && self.row < self.text.len() - 1 {
+            self.row += 1;
+            self.col = self.text[self.row].len();
+            self.move_to_current_position()?;
+        }
+
         Ok(())
     }
 
     fn change_mode(&mut self, mode: Mode) -> Result<()> {
         self.mode = mode;
         let mut stdout = stdout();
-        let (x, y) = position()?;
         stdout.queue(MoveTo(0, self.height - 2))?;
         stdout.queue(PrintStyledContent(StyledContent::new(
             ContentStyle {
@@ -141,7 +193,7 @@ impl Editor {
             },
             format!(" {} ", mode.to_str()),
         )))?;
-        stdout.queue(MoveTo(x, y))?;
+        self.move_to_current_position()?;
 
         match mode {
             Mode::Normal => {
@@ -152,6 +204,11 @@ impl Editor {
             }
         }
 
+        Ok(())
+    }
+
+    fn move_to_current_position(&mut self) -> Result<()> {
+        stdout().queue(MoveTo(self.col as u16, self.row as u16))?;
         Ok(())
     }
 }
