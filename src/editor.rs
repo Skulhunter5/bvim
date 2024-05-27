@@ -214,6 +214,32 @@ impl Editor {
                     }
 
                     self.changed = true;
+                } else {
+                    if self.row > 0 {
+                        let old_line = self.text.remove(self.row);
+                        self.row -= 1;
+                        self.col = self.text[self.row].len();
+
+                        // append remainder of removed line to new current line
+                        self.move_to_current_position()?;
+                        stdout.queue(Print(&old_line[..old_line.len().min(self.width as usize - self.text[self.row].len())]))?;
+                        self.text[self.row].push_str(&old_line);
+
+                        // move down subsequent lines
+                        for row in (self.row as u16 + 1)..(self.height - 2).min(self.text.len() as u16) {
+                            stdout.queue(MoveTo(0, row))?;
+                            stdout.queue(Clear(ClearType::CurrentLine))?;
+                            stdout.queue(Print(&self.text[row as usize][..self.text[row as usize].len()]))?;
+                        }
+                        // clear previously line
+                        stdout.queue(MoveTo(0, self.text.len() as u16 + 1))?;
+                        stdout.queue(Clear(ClearType::CurrentLine))?;
+
+                        // fix cursor position
+                        self.move_to_current_position()?;
+
+                        self.changed = true;
+                    }
                 }
             },
             KeyCode::Enter => {
