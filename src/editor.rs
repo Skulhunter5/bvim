@@ -152,6 +152,12 @@ impl Editor {
             KeyCode::Down => {
                 self.move_down()?;
             },
+            KeyCode::Left => {
+                self.move_left()?;
+            },
+            KeyCode::Right => {
+                self.move_right()?;
+            },
             KeyCode::Char(':') => {
                 self.change_mode(Mode::Command)?;
             },
@@ -192,11 +198,20 @@ impl Editor {
             },
             KeyCode::Backspace => {
                 if self.col > 0 {
-                    self.text[self.row].pop();
-                    self.col -= 1;
-                    self.move_to_current_position()?;
-                    stdout.queue(Print(' '))?;
-                    self.move_to_current_position()?;
+                    if self.col == self.text[self.row].len() {
+                        self.text[self.row].pop();
+                        self.col -= 1;
+                        self.move_to_current_position()?;
+                        stdout.queue(Print(' '))?;
+                        self.move_to_current_position()?;
+                    } else {
+                        self.col -= 1;
+                        self.text[self.row].remove(self.col);
+                        self.move_to_current_position()?;
+                        stdout.queue(Clear(ClearType::UntilNewLine))?;
+                        stdout.queue(Print(&self.text[self.row][self.col..]))?;
+                        self.move_to_current_position()?;
+                    }
 
                     self.changed = true;
                 }
@@ -217,6 +232,12 @@ impl Editor {
             KeyCode::Down => {
                 self.move_down()?;
             },
+            KeyCode::Left => {
+                self.move_left()?;
+            },
+            KeyCode::Right => {
+                self.move_right()?;
+            },
             KeyCode::Char(c) => {
                 if event.modifiers.contains(KeyModifiers::CONTROL) {
                     match c {
@@ -228,8 +249,16 @@ impl Editor {
                 } else {
                     if self.col < self.width as usize {
                         stdout.queue(Print(c))?;
-                        self.text[self.row].push(c);
-                        self.col += 1;
+
+                        if self.col == self.text[self.row].len() {
+                            self.text[self.row].push(c);
+                            self.col += 1;
+                        } else {
+                            self.text[self.row].insert(self.col, c);
+                            self.col += 1;
+                            stdout.queue(Print(&self.text[self.row][self.col..]))?;
+                            self.move_to_current_position()?;
+                        }
 
                         self.changed = true;
                     }
@@ -294,7 +323,7 @@ impl Editor {
     fn move_up(&mut self) -> Result<()> {
         if self.row > 0 {
             self.row -= 1;
-            self.col = self.text[self.row].len();
+            self.col = self.col.min(self.text[self.row].len());
             self.move_to_current_position()?;
         }
 
@@ -304,7 +333,25 @@ impl Editor {
     fn move_down(&mut self) -> Result<()> {
         if self.row < self.height as usize - 3 && self.row < self.text.len() - 1 {
             self.row += 1;
-            self.col = self.text[self.row].len();
+            self.col = self.col.min(self.text[self.row].len());
+            self.move_to_current_position()?;
+        }
+
+        Ok(())
+    }
+
+    fn move_left(&mut self) -> Result<()> {
+        if self.col > 0 {
+            self.col -= 1;
+            self.move_to_current_position()?;
+        }
+
+        Ok(())
+    }
+
+    fn move_right(&mut self) -> Result<()> {
+        if self.col < self.width as usize - 1 && self.col < self.text[self.row].len() {
+            self.col += 1;
             self.move_to_current_position()?;
         }
 
