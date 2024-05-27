@@ -225,13 +225,13 @@ impl Editor {
                         stdout.queue(Print(&old_line[..old_line.len().min(self.width as usize - self.text[self.row].len())]))?;
                         self.text[self.row].push_str(&old_line);
 
-                        // move down subsequent lines
+                        // move up subsequent lines
                         for row in (self.row as u16 + 1)..(self.height - 2).min(self.text.len() as u16) {
                             stdout.queue(MoveTo(0, row))?;
                             stdout.queue(Clear(ClearType::CurrentLine))?;
                             stdout.queue(Print(&self.text[row as usize][..self.text[row as usize].len()]))?;
                         }
-                        // clear previously line
+                        // clear previously last line
                         stdout.queue(MoveTo(0, self.text.len() as u16 + 1))?;
                         stdout.queue(Clear(ClearType::CurrentLine))?;
 
@@ -243,11 +243,36 @@ impl Editor {
                 }
             },
             KeyCode::Enter => {
-                if self.row < self.height as usize - 3 {
-                    self.row += 1;
-                    self.col = 0;
-                    self.text.push(String::new());
-                    self.move_to_current_position()?;
+                if self.text.len() < self.height as usize - 2 {
+                    if self.col == self.text[self.row].len() {
+                        self.text.insert(self.row + 1, String::new());
+                        self.row += 1;
+                        self.col = 0;
+
+                        // shift subsequent lines down
+                        for row in self.row..self.text.len().min(self.height as usize - 2) {
+                            stdout.queue(MoveTo(0, row as u16))?;
+                            stdout.queue(Clear(ClearType::CurrentLine))?;
+                            stdout.queue(Print(&self.text[row][..self.text[row].len()]))?;
+                        }
+
+                        self.move_to_current_position()?;
+                    } else {
+                        // FIXME: this won't work for multibyte-encodings
+                        let new_line = self.text[self.row].split_off(self.col);
+                        self.row += 1;
+                        self.col = 0;
+                        self.text.insert(self.row, new_line);
+
+                        // reprint changed lines and shift down subsequent lines
+                        for row in (self.row - 1)..self.text.len().min(self.height as usize - 2) {
+                            stdout.queue(MoveTo(0, row as u16))?;
+                            stdout.queue(Clear(ClearType::CurrentLine))?;
+                            stdout.queue(Print(&self.text[row][..self.text[row].len()]))?;
+                        }
+
+                        self.move_to_current_position()?;
+                    }
 
                     self.changed = true;
                 }
