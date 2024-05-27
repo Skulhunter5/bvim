@@ -1,12 +1,13 @@
 use std::{fs::File, io::{stdout, Write}, path::Path, thread, time::Duration};
 
 use anyhow::{anyhow, Result};
-use crossterm::{cursor::{MoveTo, SetCursorStyle}, event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, style::{Attribute, Attributes, Color, ContentStyle, Print, PrintStyledContent, StyledContent}, terminal::{self, disable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, QueueableCommand};
+use crossterm::{cursor::{position, MoveTo, SetCursorStyle}, event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, style::{Attribute, Attributes, Color, ContentStyle, Print, PrintStyledContent, StyledContent}, terminal::{self, disable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, QueueableCommand};
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 enum Mode {
     Normal,
     Insert,
+    Command,
 }
 
 impl Mode {
@@ -14,13 +15,15 @@ impl Mode {
         match self {
             Mode::Normal => "Normal",
             Mode::Insert => "Insert",
+            Mode::Command => "Command",
         }
     }
 
     fn get_color(&self) -> Color {
         match self {
             Mode::Normal => Color::Blue,
-            Mode::Insert => Color::Green,
+            Mode::Insert => Color::Magenta,
+            Mode::Command => Color::Green,
         }
     }
 }
@@ -34,6 +37,8 @@ pub(crate) struct Editor {
     text: Vec<String>,
     col: usize,
     row: usize,
+    changed: bool,
+    command: String,
 }
 
 impl Editor {
@@ -62,6 +67,8 @@ impl Editor {
             text,
             col,
             row: 0,
+            changed: false,
+            command: String::new(),
         })
     }
 
@@ -135,6 +142,9 @@ impl Editor {
                         KeyCode::Down => {
                             self.move_down()?;
                         },
+                        KeyCode::Char(':') => {
+                            self.change_mode(Mode::Command)?;
+                        },
                         KeyCode::Char(c) => {
                             if event.modifiers.contains(KeyModifiers::CONTROL) {
                                 match c {
@@ -147,9 +157,6 @@ impl Editor {
                                 }
                             } else {
                                 match c {
-                                    'q' => {
-                                        self.terminate = true;
-                                    },
                                     'i' => {
                                         self.change_mode(Mode::Insert)?;
                                     },
@@ -174,6 +181,8 @@ impl Editor {
                                 self.move_to_current_position()?;
                                 stdout.queue(Print(' '))?;
                                 self.move_to_current_position()?;
+
+                                self.changed = true;
                             }
                         },
                         KeyCode::Enter => {
@@ -182,6 +191,8 @@ impl Editor {
                                 self.col = 0;
                                 self.text.push(String::new());
                                 self.move_to_current_position()?;
+
+                                self.changed = true;
                             }
                         },
                         KeyCode::Up => {
@@ -196,11 +207,6 @@ impl Editor {
                                     'c' => {
                                         self.change_mode(Mode::Normal)?;
                                     },
-                                    's' => {
-                                        if self.path.is_some() {
-                                            self.save_file()?;
-                                        }
-                                    },
                                     _ => {},
                                 }
                             } else {
@@ -208,13 +214,59 @@ impl Editor {
                                     stdout.queue(Print(c))?;
                                     self.text[self.row].push(c);
                                     self.col += 1;
+
+                                    self.changed = true;
                                 }
                             }
                         },
                         _ => {},
                     }
                 }
-            }
+            },
+            Mode::Command => {
+                if event.kind == KeyEventKind::Press {
+                    match event.code {
+                        KeyCode::Esc => {
+                            self.command.clear();
+                            self.clear_message()?;
+                            self.change_mode(Mode::Normal)?;
+                        }
+                        KeyCode::Backspace => {
+                            if self.command.len() > 0 {
+                                stdout.queue(MoveTo(self.command.len() as u16, self.height - 1))?;
+                                stdout.queue(Print(' '))?;
+                                stdout.queue(MoveTo(self.command.len() as u16, self.height - 1))?;
+                                self.command.pop();
+                            } else {
+                                stdout.queue(MoveTo(0, self.height - 1))?;
+                                stdout.queue(Print(' '))?;
+                                self.change_mode(Mode::Normal)?;
+                            }
+                        },
+                        KeyCode::Enter => {
+                            self.change_mode(Mode::Normal)?;
+                            self.execute_command()?;
+                            self.command.clear();
+                        },
+                        KeyCode::Char(c) => {
+                            if event.modifiers.contains(KeyModifiers::CONTROL) {
+                                match c {
+                                    'c' => {
+                                        self.command.clear();
+                                        self.clear_message()?;
+                                        self.change_mode(Mode::Normal)?;
+                                    },
+                                    _ => {},
+                                }
+                            } else {
+                                stdout.queue(Print(c))?;
+                                self.command.push(c);
+                            }
+                        },
+                        _ => {},
+                    }
+                }
+            },
         }
 
         Ok(())
@@ -245,6 +297,33 @@ impl Editor {
 
         self.mode = mode;
         
+        self.print_mode(mode)?;
+        match mode {
+            Mode::Command => {
+                stdout.queue(MoveTo(0, self.height))?;
+                stdout.queue(Clear(ClearType::CurrentLine))?;
+                stdout.queue(Print(':'))?;
+            },
+            Mode::Normal | Mode::Insert => {
+                self.move_to_current_position()?;
+            },
+        }
+
+        match mode {
+            Mode::Normal | Mode::Command => {
+                stdout.queue(SetCursorStyle::SteadyBlock)?;
+            },
+            Mode::Insert => {
+                stdout.queue(SetCursorStyle::SteadyBar)?;
+            },
+        }
+
+        Ok(())
+    }
+
+    fn print_mode(&self, mode: Mode) -> Result<()> {
+        let mut stdout = stdout();
+
         stdout.queue(MoveTo(0, self.height - 2))?;
         stdout.queue(Clear(ClearType::CurrentLine))?;
         stdout.queue(PrintStyledContent(StyledContent::new(
@@ -256,16 +335,6 @@ impl Editor {
             },
             format!(" {} ", mode.to_str()),
         )))?;
-        self.move_to_current_position()?;
-
-        match mode {
-            Mode::Normal => {
-                stdout.queue(SetCursorStyle::SteadyBlock)?;
-            },
-            Mode::Insert => {
-                stdout.queue(SetCursorStyle::SteadyBar)?;
-            }
-        }
 
         Ok(())
     }
@@ -275,15 +344,45 @@ impl Editor {
         Ok(())
     }
 
-    fn print_debug_message(&self, message: String) -> Result<()> {
+    fn print_debug_message<S: std::fmt::Display>(&self, message: S) -> Result<()> {
+        let (col, row) = position()?;
+
         stdout().queue(MoveTo(0, self.height - 1))?;
         stdout().queue(Print(message))?;
-        self.move_to_current_position()?;
+        stdout().queue(MoveTo(col, row))?;
 
         Ok(())
     }
 
-    fn save_file(&self) -> Result<()> {
+    fn print_error_message<S: std::fmt::Display>(&self, message: S) -> Result<()> {
+        let (col, row) = position()?;
+
+        stdout().queue(MoveTo(0, self.height - 1))?;
+        stdout().queue(PrintStyledContent(StyledContent::new(
+            ContentStyle {
+                foreground_color: Some(Color::Black),
+                background_color: Some(Color::Red),
+                underline_color: None,
+                attributes: Attributes::default(),
+            },
+            message,
+        )))?;
+        stdout().queue(MoveTo(col, row))?;
+
+        Ok(())
+    }
+
+    fn clear_message(&mut self) -> Result<()> {
+        let (col, row) = position()?;
+
+        stdout().queue(MoveTo(0, self.height - 1))?;
+        stdout().queue(Clear(ClearType::CurrentLine))?;
+        stdout().queue(MoveTo(col, row))?;
+
+        Ok(())
+    }
+
+    fn save_file(&mut self) -> Result<()> {
         if let Some(path) = &self.path {
             let mut file = File::create(path)?;
             for i in 0..(self.text.len() - 1) {
@@ -291,9 +390,42 @@ impl Editor {
                 file.write_all("\n".as_bytes())?;
             }
             file.write_all(self.text.last().unwrap().as_bytes())?;
+
+            self.changed = false;
             Ok(())
         } else {
             Err(anyhow!("path not set"))
         }
+    }
+
+    fn execute_command(&mut self) -> Result<()> {
+        if self.command.starts_with("print ") {
+            self.print_debug_message(&self.command["print ".len()..])?;
+        } else if self.command == "q" {
+            if self.changed {
+                self.print_error_message("No write since last change")?;
+            } else {
+                self.terminate = true;
+            }
+        } else if self.command == "q!" {
+            self.terminate = true;
+        } else if self.command == "w" {
+            if self.path.is_some() {
+                self.save_file()?;
+            } else {
+                self.print_error_message("No opened file, can't write")?;
+            }
+        } else if self.command == "wq" {
+            if self.path.is_some() {
+                self.save_file()?;
+                self.terminate = true;
+            } else {
+                self.print_error_message("No opened file, can't write")?;
+            }
+        } else {
+            self.print_error_message(format!("Not an editor command: {}", self.command))?;
+        }
+
+        Ok(())
     }
 }
