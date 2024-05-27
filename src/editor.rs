@@ -129,6 +129,12 @@ impl Editor {
             Mode::Normal => {
                 if event.kind == KeyEventKind::Press {
                     match event.code {
+                        KeyCode::Up => {
+                            self.move_up()?;
+                        },
+                        KeyCode::Down => {
+                            self.move_down()?;
+                        },
                         KeyCode::Char(c) => {
                             if event.modifiers.contains(KeyModifiers::CONTROL) {
                                 match c {
