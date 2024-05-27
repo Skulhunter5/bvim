@@ -409,22 +409,50 @@ impl Editor {
         stdout().queue(MoveTo(self.col as u16, self.row as u16))?;
         Ok(())
     }
+    
+    fn print_message<S: std::fmt::Display>(&self, message: S) -> Result<()> {
+        let mut stdout = stdout();
 
-    fn print_debug_message<S: std::fmt::Display>(&self, message: S) -> Result<()> {
         let (col, row) = position()?;
 
-        stdout().queue(MoveTo(0, self.height - 1))?;
-        stdout().queue(Print(message))?;
-        stdout().queue(MoveTo(col, row))?;
+        stdout.queue(MoveTo(0, self.height - 1))?;
+        stdout.queue(Clear(ClearType::CurrentLine))?;
+        stdout.queue(Print(&message))?;
+        stdout.queue(MoveTo(col, row))?;
+
+        Ok(())
+    }
+
+    fn print_debug_message<S: std::fmt::Display>(&self, message: S) -> Result<()> {
+        let mut stdout = stdout();
+
+        let (col, row) = position()?;
+
+        stdout.queue(MoveTo(0, self.height - 1))?;
+        stdout.queue(Clear(ClearType::CurrentLine))?;
+        stdout.queue(PrintStyledContent(StyledContent::new(
+            ContentStyle {
+                foreground_color: Some(Color::Black),
+                background_color: Some(Color::Magenta),
+                underline_color: None,
+                attributes: Attributes::default(),
+            },
+            &message,
+        )))?;
+        stdout.queue(MoveTo(col, row))?;
 
         Ok(())
     }
 
     fn print_error_message<S: std::fmt::Display>(&self, message: S) -> Result<()> {
+        let mut stdout = stdout();
+
+        
         let (col, row) = position()?;
 
-        stdout().queue(MoveTo(0, self.height - 1))?;
-        stdout().queue(PrintStyledContent(StyledContent::new(
+        stdout.queue(MoveTo(0, self.height - 1))?;
+        stdout.queue(Clear(ClearType::CurrentLine))?;
+        stdout.queue(PrintStyledContent(StyledContent::new(
             ContentStyle {
                 foreground_color: Some(Color::Black),
                 background_color: Some(Color::Red),
@@ -433,17 +461,19 @@ impl Editor {
             },
             message,
         )))?;
-        stdout().queue(MoveTo(col, row))?;
+        stdout.queue(MoveTo(col, row))?;
 
         Ok(())
     }
 
     fn clear_message(&mut self) -> Result<()> {
+        let mut stdout = stdout();
+
         let (col, row) = position()?;
 
-        stdout().queue(MoveTo(0, self.height - 1))?;
-        stdout().queue(Clear(ClearType::CurrentLine))?;
-        stdout().queue(MoveTo(col, row))?;
+        stdout.queue(MoveTo(0, self.height - 1))?;
+        stdout.queue(Clear(ClearType::CurrentLine))?;
+        stdout.queue(MoveTo(col, row))?;
 
         Ok(())
     }
@@ -457,6 +487,8 @@ impl Editor {
             }
             file.write_all(self.text.last().unwrap().as_bytes())?;
 
+            self.print_message(format!("\"{}\" {}L written", path, self.text.len()))?;
+
             self.changed = false;
             Ok(())
         } else {
@@ -466,8 +498,7 @@ impl Editor {
 
     fn execute_command(&mut self) -> Result<()> {
         if self.command.starts_with("print ") {
-            self.clear_message()?;
-            self.print_debug_message(&self.command["print ".len()..])?;
+            self.print_message(&self.command["print ".len()..])?;
         } else if self.command == "q" {
             if self.changed {
                 // not necessary to clear here because the error message is longer than the command
