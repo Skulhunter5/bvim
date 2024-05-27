@@ -36,12 +36,12 @@ fn main() {
     }
 
     let mut editor = if let Some(path) = filepath {
-        let path = Path::new(&path);
-        if !path.exists() {
+        let ospath = Path::new(&path);
+        if !ospath.exists() {
             eprintln!("bvim: error: file doesn't exist");
             exit(-1);
         }
-        if !path.is_file() {
+        if !ospath.is_file() {
             eprintln!("bvim: error: not a file");
             exit(-1);
         }

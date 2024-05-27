@@ -1,6 +1,6 @@
-use std::{io::{stdout, Write}, path::Path, thread, time::Duration};
+use std::{fs::File, io::{stdout, Write}, path::Path, thread, time::Duration};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use crossterm::{cursor::{MoveTo, SetCursorStyle}, event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, style::{Attribute, Attributes, Color, ContentStyle, Print, PrintStyledContent, StyledContent}, terminal::{self, disable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, QueueableCommand};
 
 #[derive(Copy, Clone)]
@@ -27,6 +27,7 @@ impl Mode {
 
 pub(crate) struct Editor {
     mode: Mode,
+    path: Option<String>,
     width: u16,
     height: u16,
     terminate: bool,
@@ -38,22 +39,23 @@ pub(crate) struct Editor {
 impl Editor {
     pub fn new() -> Result<Self> {
         let text = vec![String::new()];
-        Editor::new_with_text(text)
+        Editor::create(text, None)
     }
 
-    pub fn new_with_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let text = Editor::load_file(path)?;
+    pub fn new_with_file(path: String) -> Result<Self> {
+        let text = Editor::load_file(&path)?;
 
-        Editor::new_with_text(text)
+        Editor::create(text, Some(path.to_string()))
     }
 
-    fn new_with_text(text: Vec<String>) -> Result<Self> {
+    fn create(text: Vec<String>, path: Option<String>) -> Result<Self> {
         let (width, height) = terminal::size()?;
 
         let col = text[0].len();
 
         Ok(Self {
             mode: Mode::Normal,
+            path,
             width,
             height,
             terminate: false,
@@ -127,11 +129,27 @@ impl Editor {
             Mode::Normal => {
                 if event.kind == KeyEventKind::Press {
                     match event.code {
-                        KeyCode::Char('q') => {
-                            self.terminate = true;
-                        },
-                        KeyCode::Char('i') => {
-                            self.change_mode(Mode::Insert)?;
+                        KeyCode::Char(c) => {
+                            if event.modifiers.contains(KeyModifiers::CONTROL) {
+                                match c {
+                                    's' => {
+                                        if self.path.is_some() {
+                                            self.save_file()?;
+                                        }
+                                    },
+                                    _ => {},
+                                }
+                            } else {
+                                match c {
+                                    'q' => {
+                                        self.terminate = true;
+                                    },
+                                    'i' => {
+                                        self.change_mode(Mode::Insert)?;
+                                    },
+                                    _ => {},
+                                }
+                            }
                         },
                         _ => {},
                     }
@@ -171,6 +189,11 @@ impl Editor {
                                 match c {
                                     'c' => {
                                         self.change_mode(Mode::Normal)?;
+                                    },
+                                    's' => {
+                                        if self.path.is_some() {
+                                            self.save_file()?;
+                                        }
                                     },
                                     _ => {},
                                 }
@@ -252,5 +275,19 @@ impl Editor {
         self.move_to_current_position()?;
 
         Ok(())
+    }
+
+    fn save_file(&self) -> Result<()> {
+        if let Some(path) = &self.path {
+            let mut file = File::create(path)?;
+            for i in 0..(self.text.len() - 1) {
+                file.write_all(&self.text[i].as_bytes())?;
+                file.write_all("\n".as_bytes())?;
+            }
+            file.write_all(self.text.last().unwrap().as_bytes())?;
+            Ok(())
+        } else {
+            Err(anyhow!("path not set"))
+        }
     }
 }
