@@ -130,143 +130,162 @@ impl Editor {
     }
 
     fn handle_key(&mut self, event: KeyEvent) -> Result<()> {
+        if event.kind == KeyEventKind::Press {
+            match self.mode {
+                Mode::Normal => self.handle_keypress_normal(event)?,
+                Mode::Insert => self.handle_keypress_insert(event)?,
+                Mode::Command => self.handle_keypress_command(event)?,
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_keypress_normal(&mut self, event: KeyEvent) -> Result<()> {
+        assert!(self.mode == Mode::Normal);
+        assert!(event.kind == KeyEventKind::Press);
+
+        match event.code {
+            KeyCode::Up => {
+                self.move_up()?;
+            },
+            KeyCode::Down => {
+                self.move_down()?;
+            },
+            KeyCode::Char(':') => {
+                self.change_mode(Mode::Command)?;
+            },
+            KeyCode::Char(c) => {
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    match c {
+                        's' => {
+                            if self.path.is_some() {
+                                self.save_file()?;
+                            }
+                        },
+                        _ => {},
+                    }
+                } else {
+                    match c {
+                        'i' => {
+                            self.change_mode(Mode::Insert)?;
+                        },
+                        _ => {},
+                    }
+                }
+            },
+            _ => {},
+        }
+
+        Ok(())
+    }
+
+    fn handle_keypress_insert(&mut self, event: KeyEvent) -> Result<()> {
+        assert!(self.mode == Mode::Insert);
+        assert!(event.kind == KeyEventKind::Press);
+
         let mut stdout = stdout();
 
-        match self.mode {
-            Mode::Normal => {
-                if event.kind == KeyEventKind::Press {
-                    match event.code {
-                        KeyCode::Up => {
-                            self.move_up()?;
-                        },
-                        KeyCode::Down => {
-                            self.move_down()?;
-                        },
-                        KeyCode::Char(':') => {
-                            self.change_mode(Mode::Command)?;
-                        },
-                        KeyCode::Char(c) => {
-                            if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                match c {
-                                    's' => {
-                                        if self.path.is_some() {
-                                            self.save_file()?;
-                                        }
-                                    },
-                                    _ => {},
-                                }
-                            } else {
-                                match c {
-                                    'i' => {
-                                        self.change_mode(Mode::Insert)?;
-                                    },
-                                    _ => {},
-                                }
-                            }
-                        },
-                        _ => {},
-                    }
+        match event.code {
+            KeyCode::Esc => {
+                self.change_mode(Mode::Normal)?;
+            },
+            KeyCode::Backspace => {
+                if self.col > 0 {
+                    self.text[self.row].pop();
+                    self.col -= 1;
+                    self.move_to_current_position()?;
+                    stdout.queue(Print(' '))?;
+                    self.move_to_current_position()?;
+
+                    self.changed = true;
                 }
             },
-            Mode::Insert => {
-                if event.kind == KeyEventKind::Press {
-                    match event.code {
-                        KeyCode::Esc => {
+            KeyCode::Enter => {
+                if self.row < self.height as usize - 3 {
+                    self.row += 1;
+                    self.col = 0;
+                    self.text.push(String::new());
+                    self.move_to_current_position()?;
+
+                    self.changed = true;
+                }
+            },
+            KeyCode::Up => {
+                self.move_up()?;
+            },
+            KeyCode::Down => {
+                self.move_down()?;
+            },
+            KeyCode::Char(c) => {
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    match c {
+                        'c' => {
                             self.change_mode(Mode::Normal)?;
                         },
-                        KeyCode::Backspace => {
-                            if self.col > 0 {
-                                self.text[self.row].pop();
-                                self.col -= 1;
-                                self.move_to_current_position()?;
-                                stdout.queue(Print(' '))?;
-                                self.move_to_current_position()?;
-
-                                self.changed = true;
-                            }
-                        },
-                        KeyCode::Enter => {
-                            if self.row < self.height as usize - 3 {
-                                self.row += 1;
-                                self.col = 0;
-                                self.text.push(String::new());
-                                self.move_to_current_position()?;
-
-                                self.changed = true;
-                            }
-                        },
-                        KeyCode::Up => {
-                            self.move_up()?;
-                        },
-                        KeyCode::Down => {
-                            self.move_down()?;
-                        },
-                        KeyCode::Char(c) => {
-                            if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                match c {
-                                    'c' => {
-                                        self.change_mode(Mode::Normal)?;
-                                    },
-                                    _ => {},
-                                }
-                            } else {
-                                if self.col < self.width as usize {
-                                    stdout.queue(Print(c))?;
-                                    self.text[self.row].push(c);
-                                    self.col += 1;
-
-                                    self.changed = true;
-                                }
-                            }
-                        },
                         _ => {},
+                    }
+                } else {
+                    if self.col < self.width as usize {
+                        stdout.queue(Print(c))?;
+                        self.text[self.row].push(c);
+                        self.col += 1;
+
+                        self.changed = true;
                     }
                 }
             },
-            Mode::Command => {
-                if event.kind == KeyEventKind::Press {
-                    match event.code {
-                        KeyCode::Esc => {
+            _ => {},
+        }
+
+        Ok(())
+    }
+
+    fn handle_keypress_command(&mut self, event: KeyEvent) -> Result<()> {
+        assert!(self.mode == Mode::Command);
+        assert!(event.kind == KeyEventKind::Press);
+
+        let mut stdout = stdout();
+
+        match event.code {
+            KeyCode::Esc => {
+                self.command.clear();
+                self.clear_message()?;
+                self.change_mode(Mode::Normal)?;
+            }
+            KeyCode::Backspace => {
+                if self.command.len() > 0 {
+                    stdout.queue(MoveTo(self.command.len() as u16, self.height - 1))?;
+                    stdout.queue(Print(' '))?;
+                    stdout.queue(MoveTo(self.command.len() as u16, self.height - 1))?;
+                    self.command.pop();
+                } else {
+                    stdout.queue(MoveTo(0, self.height - 1))?;
+                    stdout.queue(Print(' '))?;
+                    self.change_mode(Mode::Normal)?;
+                }
+            },
+            KeyCode::Enter => {
+                self.change_mode(Mode::Normal)?;
+                self.execute_command()?;
+                self.command.clear();
+            },
+            KeyCode::Char(c) => {
+                if event.modifiers.contains(KeyModifiers::CONTROL) {
+                    match c {
+                        'c' => {
                             self.command.clear();
                             self.clear_message()?;
                             self.change_mode(Mode::Normal)?;
-                        }
-                        KeyCode::Backspace => {
-                            if self.command.len() > 0 {
-                                stdout.queue(MoveTo(self.command.len() as u16, self.height - 1))?;
-                                stdout.queue(Print(' '))?;
-                                stdout.queue(MoveTo(self.command.len() as u16, self.height - 1))?;
-                                self.command.pop();
-                            } else {
-                                stdout.queue(MoveTo(0, self.height - 1))?;
-                                stdout.queue(Print(' '))?;
-                                self.change_mode(Mode::Normal)?;
-                            }
-                        },
-                        KeyCode::Enter => {
-                            self.change_mode(Mode::Normal)?;
-                            self.execute_command()?;
-                            self.command.clear();
-                        },
-                        KeyCode::Char(c) => {
-                            if event.modifiers.contains(KeyModifiers::CONTROL) {
-                                match c {
-                                    'c' => {
-                                        self.command.clear();
-                                        self.clear_message()?;
-                                        self.change_mode(Mode::Normal)?;
-                                    },
-                                    _ => {},
-                                }
-                            } else {
-                                stdout.queue(Print(c))?;
-                                self.command.push(c);
-                            }
                         },
                         _ => {},
                     }
+                } else {
+                    stdout.queue(Print(c))?;
+                    self.command.push(c);
                 }
             },
+            _ => {},
         }
 
         Ok(())
