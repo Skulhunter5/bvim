@@ -400,9 +400,11 @@ impl Editor {
 
     fn execute_command(&mut self) -> Result<()> {
         if self.command.starts_with("print ") {
+            self.clear_message()?;
             self.print_debug_message(&self.command["print ".len()..])?;
         } else if self.command == "q" {
             if self.changed {
+                // not necessary to clear here because the error message is longer than the command
                 self.print_error_message("No write since last change")?;
             } else {
                 self.terminate = true;
@@ -413,6 +415,7 @@ impl Editor {
             if self.path.is_some() {
                 self.save_file()?;
             } else {
+                // not necessary to clear here because the error message is longer than the command
                 self.print_error_message("No opened file, can't write")?;
             }
         } else if self.command == "wq" {
@@ -420,6 +423,7 @@ impl Editor {
                 self.save_file()?;
                 self.terminate = true;
             } else {
+                // not necessary to clear here because the error message is longer than the command
                 self.print_error_message("No opened file, can't write")?;
             }
         } else {
