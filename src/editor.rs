@@ -417,7 +417,7 @@ impl Editor {
         self.print_mode(mode)?;
         match mode {
             Mode::Command => {
-                stdout.queue(MoveTo(0, self.height))?;
+                stdout.queue(MoveTo(0, self.height - 1))?;
                 stdout.queue(Clear(ClearType::CurrentLine))?;
                 stdout.queue(Print(':'))?;
             },
