@@ -1,0 +1,3 @@
+[submodule "blessings"]
+	path = blessings
+	url = https://github.com/Skulhunter5/blessings.git
