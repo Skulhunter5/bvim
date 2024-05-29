@@ -245,7 +245,7 @@ impl NewEditor {
                         }
                         // clear previously last line
                         // TODO: this probably overwrites the status line if the text previously reached until height-2
-                        self.screen.move_to(0, self.text.len() as u16 + 1);
+                        self.screen.move_to(0, self.text.len() as u16);
                         self.screen.clear(blessings::ClearType::CurrentLine);
                         /* stdout.queue(MoveTo(0, self.text.len() as u16 + 1))?;
                         stdout.queue(Clear(ClearType::CurrentLine))?; */
