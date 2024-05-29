@@ -2,8 +2,10 @@ use std::{env::args, io::{stdout, Write}, path::Path, process::exit};
 
 use crossterm::{terminal::{self, LeaveAlternateScreen}, QueueableCommand};
 use editor::Editor;
+use new_editor::NewEditor;
 
 mod editor;
+mod new_editor;
 
 const HELP_MESSAGE: &str = "\
 USAGE: bvim [OPTIONS] [file]
@@ -45,9 +47,9 @@ fn main() {
             eprintln!("bvim: error: not a file");
             exit(-1);
         }
-        Editor::new_with_file(path).unwrap()
+        NewEditor::new_with_file(path).unwrap()
     } else {
-        Editor::new().unwrap()
+        NewEditor::new().unwrap()
     };
 
     match editor.run() {
