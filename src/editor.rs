@@ -232,7 +232,7 @@ impl Editor {
                             stdout.queue(Print(&self.text[row as usize][..self.text[row as usize].len()]))?;
                         }
                         // clear previously last line
-                        stdout.queue(MoveTo(0, self.text.len() as u16 + 1))?;
+                        stdout.queue(MoveTo(0, self.text.len() as u16))?;
                         stdout.queue(Clear(ClearType::CurrentLine))?;
 
                         // fix cursor position
