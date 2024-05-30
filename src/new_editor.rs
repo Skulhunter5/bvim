@@ -1,8 +1,8 @@
-use std::{fs::File, io::{stdout, Write}, path::Path, thread, time::Duration};
+use std::{fs::File, io::Write, path::Path, thread, time::Duration};
 
 use anyhow::{anyhow, Result};
-use blessings::Screen;
-use crossterm::{cursor::SetCursorStyle, event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, style::Color, terminal, QueueableCommand};
+use blessings::{CursorStyle, Screen};
+use crossterm::{event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, style::Color, terminal};
 
 #[derive(Copy, Clone, PartialEq)]
 enum Mode {
@@ -463,14 +463,14 @@ impl NewEditor {
             },
         }
 
-        // TODO: switch to blessings for cursor styles
-        let mut stdout = stdout();
         match mode {
             Mode::Normal | Mode::Command => {
-                stdout.queue(SetCursorStyle::SteadyBlock)?;
+                self.screen.set_cursor_style(CursorStyle::SteadyBlock);
+                //stdout.queue(SetCursorStyle::SteadyBlock)?;
             },
             Mode::Insert => {
-                stdout.queue(SetCursorStyle::SteadyBar)?;
+                self.screen.set_cursor_style(CursorStyle::SteadyBar);
+                //stdout.queue(SetCursorStyle::SteadyBar)?;
             },
         }
 
