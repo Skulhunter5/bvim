@@ -1,7 +1,8 @@
-use std::{fs::File, io::{stdout, Write}, path::Path, thread, time::Duration};
+use std::{fs::File, io::Write, path::Path, thread, time::Duration};
 
 use anyhow::{anyhow, Result};
-use crossterm::{cursor::{position, MoveTo, SetCursorStyle}, event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, style::{Attribute, Attributes, Color, ContentStyle, Print, PrintStyledContent, StyledContent}, terminal::{self, disable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen}, QueueableCommand};
+use blessings::{CursorStyle, Screen};
+use crossterm::{event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, style::Color, terminal};
 
 #[derive(Copy, Clone, PartialEq)]
 enum Mode {
@@ -29,6 +30,7 @@ impl Mode {
 }
 
 pub(crate) struct Editor {
+    screen: Screen,
     mode: Mode,
     path: Option<String>,
     width: u16,
@@ -58,7 +60,10 @@ impl Editor {
 
         let col = text[0].len();
 
+        let screen = Screen::new()?;
+
         Ok(Self {
+            screen,
             mode: Mode::Normal,
             path,
             width,
@@ -79,27 +84,15 @@ impl Editor {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        let mut stdout = stdout();
+        self.screen.begin()?;
 
-        // Setup terminal
-        terminal::enable_raw_mode()?;
-        stdout.queue(EnterAlternateScreen)?;
-        stdout.flush()?;
-
-        // print file contents (if applicable)
         for i in 0..self.text.len().min(self.height as usize - 2) {
-            stdout.queue(MoveTo(0, i as u16))?;
-            stdout.queue(Print(&self.text[i][0..self.text[i].len().min(self.width as usize)]))?;
+            self.screen.print_at(0, i as u16, &self.text[i]);
         }
-        self.move_to_current_position()?;
 
-        // print mode 
         self.change_mode(Mode::Normal)?;
 
         while !self.terminate {
-            //stdout.queue(Clear(terminal::ClearType::All))?;
-            //stdout.flush()?;
-
             // handle all input events
             while event::poll(std::time::Duration::ZERO)? {
                 match event::read()? {
@@ -109,6 +102,9 @@ impl Editor {
                     Event::Resize { 0: width, 1: height } => {
                         self.width = width;
                         self.height = height;
+                        self.col = self.col.min(self.width as usize - 1);
+                        self.row = self.row.min(self.height as usize - 1);
+                        self.screen.resize(width, height);
                         self.print_debug_message(format!("Resized: {}x{}", width, height))?;
                     },
                     e => {
@@ -118,13 +114,12 @@ impl Editor {
             }
 
             // show rendered screen
-            stdout.flush()?;
+            self.screen.show()?;
+
             thread::sleep(Duration::from_millis(16));
         }
 
-        stdout.queue(LeaveAlternateScreen)?;
-        stdout.flush()?;
-        disable_raw_mode()?;
+        self.screen.end()?;
 
         Ok(())
     }
@@ -190,8 +185,6 @@ impl Editor {
         assert!(self.mode == Mode::Insert);
         assert!(event.kind == KeyEventKind::Press);
 
-        let mut stdout = stdout();
-
         match event.code {
             KeyCode::Esc => {
                 self.change_mode(Mode::Normal)?;
@@ -201,16 +194,16 @@ impl Editor {
                     if self.col == self.text[self.row].len() {
                         self.text[self.row].pop();
                         self.col -= 1;
-                        self.move_to_current_position()?;
-                        stdout.queue(Print(' '))?;
-                        self.move_to_current_position()?;
+                        self.move_to_current_position();
+                        self.screen.print_char(Screen::EMPTY_CHAR);
+                        self.move_to_current_position();
                     } else {
                         self.col -= 1;
                         self.text[self.row].remove(self.col);
-                        self.move_to_current_position()?;
-                        stdout.queue(Clear(ClearType::UntilNewLine))?;
-                        stdout.queue(Print(&self.text[self.row][self.col..]))?;
-                        self.move_to_current_position()?;
+                        self.move_to_current_position();
+                        self.screen.clear(blessings::ClearType::UntilNewline);
+                        self.screen.print(&self.text[self.row][self.col..]);
+                        self.move_to_current_position();
                     }
 
                     self.changed = true;
@@ -221,22 +214,22 @@ impl Editor {
                         self.col = self.text[self.row].len();
 
                         // append remainder of removed line to new current line
-                        self.move_to_current_position()?;
-                        stdout.queue(Print(&old_line[..old_line.len().min(self.width as usize - self.text[self.row].len())]))?;
+                        self.move_to_current_position();
+                        self.screen.print(&old_line[..old_line.len().min(self.width as usize - self.text[self.row].len())]);
                         self.text[self.row].push_str(&old_line);
 
                         // move up subsequent lines
                         for row in (self.row as u16 + 1)..(self.height - 2).min(self.text.len() as u16) {
-                            stdout.queue(MoveTo(0, row))?;
-                            stdout.queue(Clear(ClearType::CurrentLine))?;
-                            stdout.queue(Print(&self.text[row as usize][..self.text[row as usize].len()]))?;
+                            self.screen.move_to(0, row);
+                            self.screen.clear(blessings::ClearType::CurrentLine);
+                            self.screen.print(&self.text[row as usize][..self.text[row as usize].len()]);
                         }
                         // clear previously last line
-                        stdout.queue(MoveTo(0, self.text.len() as u16))?;
-                        stdout.queue(Clear(ClearType::CurrentLine))?;
+                        self.screen.move_to(0, self.text.len() as u16);
+                        self.screen.clear(blessings::ClearType::CurrentLine);
 
                         // fix cursor position
-                        self.move_to_current_position()?;
+                        self.move_to_current_position();
 
                         self.changed = true;
                     }
@@ -251,12 +244,12 @@ impl Editor {
 
                         // shift subsequent lines down
                         for row in self.row..self.text.len().min(self.height as usize - 2) {
-                            stdout.queue(MoveTo(0, row as u16))?;
-                            stdout.queue(Clear(ClearType::CurrentLine))?;
-                            stdout.queue(Print(&self.text[row][..self.text[row].len()]))?;
+                            self.screen.move_to(0, row as u16);
+                            self.screen.clear(blessings::ClearType::CurrentLine);
+                            self.screen.print(&self.text[row][..self.text[row].len()]);
                         }
 
-                        self.move_to_current_position()?;
+                        self.move_to_current_position();
                     } else {
                         // FIXME: this won't work for multibyte-encodings
                         let new_line = self.text[self.row].split_off(self.col);
@@ -266,12 +259,12 @@ impl Editor {
 
                         // reprint changed lines and shift down subsequent lines
                         for row in (self.row - 1)..self.text.len().min(self.height as usize - 2) {
-                            stdout.queue(MoveTo(0, row as u16))?;
-                            stdout.queue(Clear(ClearType::CurrentLine))?;
-                            stdout.queue(Print(&self.text[row][..self.text[row].len()]))?;
+                            self.screen.move_to(0, row as u16);
+                            self.screen.clear(blessings::ClearType::CurrentLine);
+                            self.screen.print(&self.text[row][..self.text[row].len()]);
                         }
 
-                        self.move_to_current_position()?;
+                        self.move_to_current_position();
                     }
 
                     self.changed = true;
@@ -299,7 +292,7 @@ impl Editor {
                     }
                 } else {
                     if self.col < self.width as usize {
-                        stdout.queue(Print(c))?;
+                        self.screen.print_char(c);
 
                         if self.col == self.text[self.row].len() {
                             self.text[self.row].push(c);
@@ -307,8 +300,10 @@ impl Editor {
                         } else {
                             self.text[self.row].insert(self.col, c);
                             self.col += 1;
-                            stdout.queue(Print(&self.text[self.row][self.col..]))?;
-                            self.move_to_current_position()?;
+
+                            self.screen.print(&self.text[self.row][self.col..]);
+
+                            self.move_to_current_position();
                         }
 
                         self.changed = true;
@@ -325,8 +320,6 @@ impl Editor {
         assert!(self.mode == Mode::Command);
         assert!(event.kind == KeyEventKind::Press);
 
-        let mut stdout = stdout();
-
         match event.code {
             KeyCode::Esc => {
                 self.command.clear();
@@ -335,18 +328,20 @@ impl Editor {
             }
             KeyCode::Backspace => {
                 if self.command.len() > 0 {
-                    stdout.queue(MoveTo(self.command.len() as u16, self.height - 1))?;
-                    stdout.queue(Print(' '))?;
-                    stdout.queue(MoveTo(self.command.len() as u16, self.height - 1))?;
+                    self.screen.move_to(self.command.len() as u16, self.height - 1);
+                    self.screen.print_char(Screen::EMPTY_CHAR);
+                    self.screen.move_to(self.command.len() as u16, self.height - 1);
+
                     self.command.pop();
                 } else {
-                    stdout.queue(MoveTo(0, self.height - 1))?;
-                    stdout.queue(Print(' '))?;
+                    self.screen.move_to(0, self.height - 1);
+                    self.screen.print_char(Screen::EMPTY_CHAR);
                     self.change_mode(Mode::Normal)?;
                 }
             },
             KeyCode::Enter => {
                 self.change_mode(Mode::Normal)?;
+
                 self.execute_command()?;
                 self.command.clear();
             },
@@ -361,7 +356,8 @@ impl Editor {
                         _ => {},
                     }
                 } else {
-                    stdout.queue(Print(c))?;
+                    self.screen.print_char(c);
+
                     self.command.push(c);
                 }
             },
@@ -375,7 +371,7 @@ impl Editor {
         if self.row > 0 {
             self.row -= 1;
             self.col = self.col.min(self.text[self.row].len());
-            self.move_to_current_position()?;
+            self.move_to_current_position();
         }
 
         Ok(())
@@ -385,7 +381,7 @@ impl Editor {
         if self.row < self.height as usize - 3 && self.row < self.text.len() - 1 {
             self.row += 1;
             self.col = self.col.min(self.text[self.row].len());
-            self.move_to_current_position()?;
+            self.move_to_current_position();
         }
 
         Ok(())
@@ -394,7 +390,7 @@ impl Editor {
     fn move_left(&mut self) -> Result<()> {
         if self.col > 0 {
             self.col -= 1;
-            self.move_to_current_position()?;
+            self.move_to_current_position();
         }
 
         Ok(())
@@ -403,128 +399,103 @@ impl Editor {
     fn move_right(&mut self) -> Result<()> {
         if self.col < self.width as usize - 1 && self.col < self.text[self.row].len() {
             self.col += 1;
-            self.move_to_current_position()?;
+            self.move_to_current_position();
         }
 
         Ok(())
     }
 
     fn change_mode(&mut self, mode: Mode) -> Result<()> {
-        let mut stdout = stdout();
-
         self.mode = mode;
         
         self.print_mode(mode)?;
         match mode {
             Mode::Command => {
-                stdout.queue(MoveTo(0, self.height - 1))?;
-                stdout.queue(Clear(ClearType::CurrentLine))?;
-                stdout.queue(Print(':'))?;
+                self.screen.move_to(0, self.height - 1);
+                self.screen.clear(blessings::ClearType::CurrentLine);
+                self.screen.print_char(':');
             },
             Mode::Normal | Mode::Insert => {
-                self.move_to_current_position()?;
+                self.move_to_current_position();
             },
         }
 
         match mode {
             Mode::Normal | Mode::Command => {
-                stdout.queue(SetCursorStyle::SteadyBlock)?;
+                self.screen.set_cursor_style(CursorStyle::SteadyBlock);
             },
             Mode::Insert => {
-                stdout.queue(SetCursorStyle::SteadyBar)?;
+                self.screen.set_cursor_style(CursorStyle::SteadyBar);
             },
         }
 
         Ok(())
     }
 
-    fn print_mode(&self, mode: Mode) -> Result<()> {
-        let mut stdout = stdout();
+    fn print_mode(&mut self, mode: Mode) -> Result<()> {
+        self.screen.move_to(0, self.height - 2);
+        self.screen.clear(blessings::ClearType::CurrentLine);
 
-        stdout.queue(MoveTo(0, self.height - 2))?;
-        stdout.queue(Clear(ClearType::CurrentLine))?;
-        stdout.queue(PrintStyledContent(StyledContent::new(
-            ContentStyle {
-                foreground_color: Some(Color::Black),
-                background_color: Some(mode.get_color()),
-                underline_color: None,
-                attributes: Attributes::from(Attribute::Bold),
-            },
-            format!(" {} ", mode.to_str()),
-        )))?;
+        // TODO: make text bold
+        self.screen.set_colors(Color::Black, mode.get_color());
+        self.screen.print(format!(" {} ", mode.to_str()));
+        self.screen.clear_colors();
 
         Ok(())
     }
 
-    fn move_to_current_position(&self) -> Result<()> {
-        stdout().queue(MoveTo(self.col as u16, self.row as u16))?;
-        Ok(())
+    fn move_to_current_position(&mut self) {
+        self.screen.move_to(self.col as u16, self.row as u16);
     }
     
-    fn print_message<S: std::fmt::Display>(&self, message: S) -> Result<()> {
-        let mut stdout = stdout();
+    fn print_message<S: std::fmt::Display>(&mut self, message: S) -> Result<()> {
+        self.screen.save_position();
 
-        let (col, row) = position()?;
+        self.screen.move_to(0, self.height - 1);
+        self.screen.clear(blessings::ClearType::CurrentLine);
 
-        stdout.queue(MoveTo(0, self.height - 1))?;
-        stdout.queue(Clear(ClearType::CurrentLine))?;
-        stdout.queue(Print(&message))?;
-        stdout.queue(MoveTo(col, row))?;
+        self.screen.print(&message.to_string());
 
-        Ok(())
-    }
-
-    fn print_debug_message<S: std::fmt::Display>(&self, message: S) -> Result<()> {
-        let mut stdout = stdout();
-
-        let (col, row) = position()?;
-
-        stdout.queue(MoveTo(0, self.height - 1))?;
-        stdout.queue(Clear(ClearType::CurrentLine))?;
-        stdout.queue(PrintStyledContent(StyledContent::new(
-            ContentStyle {
-                foreground_color: Some(Color::Black),
-                background_color: Some(Color::Magenta),
-                underline_color: None,
-                attributes: Attributes::default(),
-            },
-            &message,
-        )))?;
-        stdout.queue(MoveTo(col, row))?;
+        self.screen.restore_position();
 
         Ok(())
     }
 
-    fn print_error_message<S: std::fmt::Display>(&self, message: S) -> Result<()> {
-        let mut stdout = stdout();
+    fn print_debug_message<S: std::fmt::Display>(&mut self, message: S) -> Result<()> {
+        self.screen.save_position();
 
-        
-        let (col, row) = position()?;
+        self.screen.move_to(0, self.height - 1);
+        self.screen.clear(blessings::ClearType::CurrentLine);
 
-        stdout.queue(MoveTo(0, self.height - 1))?;
-        stdout.queue(Clear(ClearType::CurrentLine))?;
-        stdout.queue(PrintStyledContent(StyledContent::new(
-            ContentStyle {
-                foreground_color: Some(Color::Black),
-                background_color: Some(Color::Red),
-                underline_color: None,
-                attributes: Attributes::default(),
-            },
-            message,
-        )))?;
-        stdout.queue(MoveTo(col, row))?;
+        self.screen.set_colors(Color::Black, Color::Magenta);
+        self.screen.print(&message.to_string());
+        self.screen.clear_colors();
+
+        self.screen.restore_position();
+
+        Ok(())
+    }
+
+    fn print_error_message<S: std::fmt::Display>(&mut self, message: S) -> Result<()> {
+        self.screen.save_position();
+
+        self.screen.move_to(0, self.height - 1);
+        self.screen.clear(blessings::ClearType::CurrentLine);
+
+        self.screen.set_colors(Color::Black, Color::Red);
+        self.screen.print(&message.to_string());
+        self.screen.clear_colors();
+
+        self.screen.restore_position();
 
         Ok(())
     }
 
     fn clear_message(&mut self) -> Result<()> {
-        let mut stdout = stdout();
-
-        let (col, row) = position()?;
-
-        stdout.queue(MoveTo(0, self.height - 1))?;
-        stdout.queue(Clear(ClearType::CurrentLine))?;
-        stdout.queue(MoveTo(col, row))?;
+        self.screen.save_position();
+        self.screen.move_to(0, self.height - 1);
+        self.screen.clear(blessings::ClearType::CurrentLine);
+        self.screen.restore_position();
 
         Ok(())
     }
@@ -549,7 +520,7 @@ impl Editor {
 
     fn execute_command(&mut self) -> Result<()> {
         if self.command.starts_with("print ") {
-            self.print_message(&self.command["print ".len()..])?;
+            self.print_message(self.command["print ".len()..].to_string())?;
         } else if self.command == "q" {
             if self.changed {
                 // not necessary to clear here because the error message is longer than the command
