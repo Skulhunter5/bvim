@@ -105,10 +105,10 @@ impl Editor {
                         self.col = self.col.min(self.width as usize - 1);
                         self.row = self.row.min(self.height as usize - 1);
                         self.screen.resize(width, height);
-                        self.print_debug_message(format!("Resized: {}x{}", width, height))?;
+                        self.print_debug_message(format!("Resized: {}x{}", width, height));
                     },
                     e => {
-                        self.print_debug_message(format!("unhandled event: {:?}", e))?;
+                        self.print_debug_message(format!("unhandled event: {:?}", e));
                     },
                 }
             }
@@ -323,7 +323,7 @@ impl Editor {
         match event.code {
             KeyCode::Esc => {
                 self.command.clear();
-                self.clear_message()?;
+                self.clear_message();
                 self.change_mode(Mode::Normal)?;
             }
             KeyCode::Backspace => {
@@ -350,7 +350,7 @@ impl Editor {
                     match c {
                         'c' => {
                             self.command.clear();
-                            self.clear_message()?;
+                            self.clear_message();
                             self.change_mode(Mode::Normal)?;
                         },
                         _ => {},
@@ -408,7 +408,7 @@ impl Editor {
     fn change_mode(&mut self, mode: Mode) -> Result<()> {
         self.mode = mode;
         
-        self.print_mode(mode)?;
+        self.print_mode(mode);
         match mode {
             Mode::Command => {
                 self.screen.move_to(0, self.height - 1);
@@ -432,7 +432,7 @@ impl Editor {
         Ok(())
     }
 
-    fn print_mode(&mut self, mode: Mode) -> Result<()> {
+    fn print_mode(&mut self, mode: Mode) {
         self.screen.move_to(0, self.height - 2);
         self.screen.clear(ClearType::CurrentLine);
 
@@ -440,15 +440,13 @@ impl Editor {
         self.screen.set_colors(Color::Black, mode.get_color());
         self.screen.print(format!(" {} ", mode.to_str()));
         self.screen.clear_colors();
-
-        Ok(())
     }
 
     fn move_to_current_position(&mut self) {
         self.screen.move_to(self.col as u16, self.row as u16);
     }
     
-    fn print_message<S: std::fmt::Display>(&mut self, message: S) -> Result<()> {
+    fn print_message<S: std::fmt::Display>(&mut self, message: S) {
         self.screen.save_position();
 
         self.screen.move_to(0, self.height - 1);
@@ -457,11 +455,9 @@ impl Editor {
         self.screen.print(&message.to_string());
 
         self.screen.restore_position();
-
-        Ok(())
     }
 
-    fn print_debug_message<S: std::fmt::Display>(&mut self, message: S) -> Result<()> {
+    fn print_debug_message<S: std::fmt::Display>(&mut self, message: S) {
         self.screen.save_position();
 
         self.screen.move_to(0, self.height - 1);
@@ -472,11 +468,9 @@ impl Editor {
         self.screen.clear_colors();
 
         self.screen.restore_position();
-
-        Ok(())
     }
 
-    fn print_error_message<S: std::fmt::Display>(&mut self, message: S) -> Result<()> {
+    fn print_error_message<S: std::fmt::Display>(&mut self, message: S) {
         self.screen.save_position();
 
         self.screen.move_to(0, self.height - 1);
@@ -487,17 +481,13 @@ impl Editor {
         self.screen.clear_colors();
 
         self.screen.restore_position();
-
-        Ok(())
     }
 
-    fn clear_message(&mut self) -> Result<()> {
+    fn clear_message(&mut self) {
         self.screen.save_position();
         self.screen.move_to(0, self.height - 1);
         self.screen.clear(ClearType::CurrentLine);
         self.screen.restore_position();
-
-        Ok(())
     }
 
     fn save_file(&mut self) -> Result<()> {
@@ -509,7 +499,7 @@ impl Editor {
             }
             file.write_all(self.text.last().unwrap().as_bytes())?;
 
-            self.print_message(format!("\"{}\" {}L written", path, self.text.len()))?;
+            self.print_message(format!("\"{}\" {}L written", path, self.text.len()));
 
             self.changed = false;
             Ok(())
@@ -520,11 +510,11 @@ impl Editor {
 
     fn execute_command(&mut self) -> Result<()> {
         if self.command.starts_with("print ") {
-            self.print_message(self.command["print ".len()..].to_string())?;
+            self.print_message(self.command["print ".len()..].to_string());
         } else if self.command == "q" {
             if self.changed {
                 // not necessary to clear here because the error message is longer than the command
-                self.print_error_message("No write since last change")?;
+                self.print_error_message("No write since last change");
             } else {
                 self.terminate = true;
             }
@@ -535,7 +525,7 @@ impl Editor {
                 self.save_file()?;
             } else {
                 // not necessary to clear here because the error message is longer than the command
-                self.print_error_message("No opened file, can't write")?;
+                self.print_error_message("No opened file, can't write");
             }
         } else if self.command == "wq" {
             if self.path.is_some() {
@@ -543,10 +533,10 @@ impl Editor {
                 self.terminate = true;
             } else {
                 // not necessary to clear here because the error message is longer than the command
-                self.print_error_message("No opened file, can't write")?;
+                self.print_error_message("No opened file, can't write");
             }
         } else {
-            self.print_error_message(format!("Not an editor command: {}", self.command))?;
+            self.print_error_message(format!("Not an editor command: {}", self.command));
         }
 
         Ok(())
