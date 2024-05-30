@@ -1,7 +1,7 @@
 use std::{fs::File, io::Write, path::Path, thread, time::Duration};
 
 use anyhow::{anyhow, Result};
-use blessings::{CursorStyle, Screen};
+use blessings::{ClearType, CursorStyle, Screen};
 use crossterm::{event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, style::Color, terminal};
 
 #[derive(Copy, Clone, PartialEq)]
@@ -201,7 +201,7 @@ impl Editor {
                         self.col -= 1;
                         self.text[self.row].remove(self.col);
                         self.move_to_current_position();
-                        self.screen.clear(blessings::ClearType::UntilNewline);
+                        self.screen.clear(ClearType::UntilNewline);
                         self.screen.print(&self.text[self.row][self.col..]);
                         self.move_to_current_position();
                     }
@@ -221,12 +221,12 @@ impl Editor {
                         // move up subsequent lines
                         for row in (self.row as u16 + 1)..(self.height - 2).min(self.text.len() as u16) {
                             self.screen.move_to(0, row);
-                            self.screen.clear(blessings::ClearType::CurrentLine);
+                            self.screen.clear(ClearType::CurrentLine);
                             self.screen.print(&self.text[row as usize][..self.text[row as usize].len()]);
                         }
                         // clear previously last line
                         self.screen.move_to(0, self.text.len() as u16);
-                        self.screen.clear(blessings::ClearType::CurrentLine);
+                        self.screen.clear(ClearType::CurrentLine);
 
                         // fix cursor position
                         self.move_to_current_position();
@@ -245,7 +245,7 @@ impl Editor {
                         // shift subsequent lines down
                         for row in self.row..self.text.len().min(self.height as usize - 2) {
                             self.screen.move_to(0, row as u16);
-                            self.screen.clear(blessings::ClearType::CurrentLine);
+                            self.screen.clear(ClearType::CurrentLine);
                             self.screen.print(&self.text[row][..self.text[row].len()]);
                         }
 
@@ -260,7 +260,7 @@ impl Editor {
                         // reprint changed lines and shift down subsequent lines
                         for row in (self.row - 1)..self.text.len().min(self.height as usize - 2) {
                             self.screen.move_to(0, row as u16);
-                            self.screen.clear(blessings::ClearType::CurrentLine);
+                            self.screen.clear(ClearType::CurrentLine);
                             self.screen.print(&self.text[row][..self.text[row].len()]);
                         }
 
@@ -412,7 +412,7 @@ impl Editor {
         match mode {
             Mode::Command => {
                 self.screen.move_to(0, self.height - 1);
-                self.screen.clear(blessings::ClearType::CurrentLine);
+                self.screen.clear(ClearType::CurrentLine);
                 self.screen.print_char(':');
             },
             Mode::Normal | Mode::Insert => {
@@ -434,7 +434,7 @@ impl Editor {
 
     fn print_mode(&mut self, mode: Mode) -> Result<()> {
         self.screen.move_to(0, self.height - 2);
-        self.screen.clear(blessings::ClearType::CurrentLine);
+        self.screen.clear(ClearType::CurrentLine);
 
         // TODO: make text bold
         self.screen.set_colors(Color::Black, mode.get_color());
@@ -452,7 +452,7 @@ impl Editor {
         self.screen.save_position();
 
         self.screen.move_to(0, self.height - 1);
-        self.screen.clear(blessings::ClearType::CurrentLine);
+        self.screen.clear(ClearType::CurrentLine);
 
         self.screen.print(&message.to_string());
 
@@ -465,7 +465,7 @@ impl Editor {
         self.screen.save_position();
 
         self.screen.move_to(0, self.height - 1);
-        self.screen.clear(blessings::ClearType::CurrentLine);
+        self.screen.clear(ClearType::CurrentLine);
 
         self.screen.set_colors(Color::Black, Color::Magenta);
         self.screen.print(&message.to_string());
@@ -480,7 +480,7 @@ impl Editor {
         self.screen.save_position();
 
         self.screen.move_to(0, self.height - 1);
-        self.screen.clear(blessings::ClearType::CurrentLine);
+        self.screen.clear(ClearType::CurrentLine);
 
         self.screen.set_colors(Color::Black, Color::Red);
         self.screen.print(&message.to_string());
@@ -494,7 +494,7 @@ impl Editor {
     fn clear_message(&mut self) -> Result<()> {
         self.screen.save_position();
         self.screen.move_to(0, self.height - 1);
-        self.screen.clear(blessings::ClearType::CurrentLine);
+        self.screen.clear(ClearType::CurrentLine);
         self.screen.restore_position();
 
         Ok(())
