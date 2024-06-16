@@ -1,9 +1,20 @@
-use std::{env::args, io::{stdout, Write}, path::Path, process::exit};
+use std::{
+    env::args,
+    io::{stdout, Write},
+    process::exit,
+};
 
-use crossterm::{terminal::{self, LeaveAlternateScreen}, QueueableCommand};
+use crossterm::{
+    terminal::{self, LeaveAlternateScreen},
+    QueueableCommand,
+};
 use editor::Editor;
 
+mod buffer;
 mod editor;
+mod keymap;
+mod util;
+mod window;
 
 const HELP_MESSAGE: &str = "\
 USAGE: bvim [OPTIONS] [file]
@@ -35,27 +46,14 @@ fn main() {
         filepath = Some(arg);
     }
 
-    let mut editor = if let Some(path) = filepath {
-        let ospath = Path::new(&path);
-        if !ospath.exists() {
-            eprintln!("bvim: error: file doesn't exist");
-            exit(-1);
-        }
-        if !ospath.is_file() {
-            eprintln!("bvim: error: not a file");
-            exit(-1);
-        }
-        Editor::new_with_file(path).unwrap()
-    } else {
-        Editor::new().unwrap()
-    };
+    let mut editor = Editor::new(filepath).unwrap();
 
     match editor.run() {
         Ok(()) => {
             stdout().queue(LeaveAlternateScreen).unwrap();
             stdout().flush().unwrap();
             terminal::disable_raw_mode().unwrap();
-        },
+        }
         e => e.unwrap(),
     }
 }

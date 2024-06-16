@@ -1,11 +1,21 @@
-use std::{fs::File, io::Write, path::Path, thread, time::Duration};
+use std::{thread, time::Duration};
 
-use anyhow::{anyhow, Result};
-use blessings::{ClearType, CursorStyle, Screen};
-use crossterm::{event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers}, style::Color, terminal};
+use anyhow::Result;
+use blessings::{ClearType, CursorStyle, Screen, WindowBounds};
+use crossterm::{
+    event::{self, Event, KeyEvent, KeyEventKind},
+    style::Color,
+    terminal,
+};
 
-#[derive(Copy, Clone, PartialEq)]
-enum Mode {
+use crate::{
+    buffer::Buffer,
+    keymap::{Action, KeyMap},
+    window::Window,
+};
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum Mode {
     Normal,
     Insert,
     Command,
@@ -32,65 +42,46 @@ impl Mode {
 pub(crate) struct Editor {
     screen: Screen,
     mode: Mode,
-    path: Option<String>,
     width: u16,
     height: u16,
+    keymap: KeyMap,
+    window: Window,
     terminate: bool,
-    text: Vec<String>,
-    col: usize,
-    row: usize,
-    changed: bool,
     command: String,
+    message: Option<String>,
 }
 
 impl Editor {
-    pub fn new() -> Result<Self> {
-        let text = vec![String::new()];
-        Editor::create(text, None)
-    }
-
-    pub fn new_with_file(path: String) -> Result<Self> {
-        let text = Editor::load_file(&path)?;
-
-        Editor::create(text, Some(path.to_string()))
-    }
-
-    fn create(text: Vec<String>, path: Option<String>) -> Result<Self> {
+    pub fn new(path: Option<String>) -> Result<Self> {
         let (width, height) = terminal::size()?;
 
-        let col = text[0].len();
-
         let screen = Screen::new()?;
+
+        let keymap = KeyMap::default();
+
+        let window_bounds = WindowBounds::new(0, 0, width, height - 2);
+        let buffer = if let Some(path) = &path {
+            Buffer::new_from_file(path)?
+        } else {
+            Buffer::new()
+        };
+        let window = Window::new(buffer, window_bounds);
 
         Ok(Self {
             screen,
             mode: Mode::Normal,
-            path,
             width,
             height,
+            keymap,
+            window,
             terminate: false,
-            text,
-            col,
-            row: 0,
-            changed: false,
             command: String::new(),
+            message: None,
         })
-    }
-
-    fn load_file<P: AsRef<Path>>(path: P) -> Result<Vec<String>> {
-        let s = std::fs::read_to_string(path)?.replace("\r", "");
-        let text = s.split('\n').map(|line| line.to_string()).collect::<Vec<String>>();
-        Ok(text)
     }
 
     pub fn run(&mut self) -> Result<()> {
         self.screen.begin()?;
-
-        for i in 0..self.text.len().min(self.height as usize - 2) {
-            self.screen.print_at(0, i as u16, &self.text[i]);
-        }
-
-        self.change_mode(Mode::Normal)?;
 
         while !self.terminate {
             // handle all input events
@@ -98,21 +89,26 @@ impl Editor {
                 match event::read()? {
                     Event::Key { 0: key_event } => {
                         self.handle_key(key_event)?;
-                    },
-                    Event::Resize { 0: width, 1: height } => {
+                    }
+                    Event::Resize {
+                        0: width,
+                        1: height,
+                    } => {
                         self.width = width;
                         self.height = height;
-                        self.col = self.col.min(self.width as usize - 1);
-                        self.row = self.row.min(self.height as usize - 1);
+
                         self.screen.resize(width, height);
-                        self.print_debug_message(format!("Resized: {}x{}", width, height));
-                    },
+                        self.window
+                            .set_bounds(WindowBounds::new(0, 0, self.width, self.height));
+                    }
                     e => {
-                        self.print_debug_message(format!("unhandled event: {:?}", e));
-                    },
+                        self.notify(format!("unhandled event: {:?}", e));
+                    }
                 }
             }
 
+            // render tui
+            self.render();
             // show rendered screen
             self.screen.show()?;
 
@@ -124,315 +120,45 @@ impl Editor {
         Ok(())
     }
 
-    fn handle_key(&mut self, event: KeyEvent) -> Result<()> {
-        if event.kind == KeyEventKind::Press {
-            match self.mode {
-                Mode::Normal => self.handle_keypress_normal(event)?,
-                Mode::Insert => self.handle_keypress_insert(event)?,
-                Mode::Command => self.handle_keypress_command(event)?,
-            }
+    fn render(&mut self) {
+        let start = std::time::Instant::now();
+
+        let mut cursor = (0, 0);
+
+        // TODO: maybe add a toggle to blessings to stop it from copying the screen buffer
+        // contents if we're just going to overwrite them anyways
+        self.screen.clear(ClearType::All);
+
+        self.window.render(&mut self.screen);
+        if self.mode == Mode::Normal || self.mode == Mode::Insert {
+            cursor = self.screen.get_cursor();
         }
 
-        Ok(())
+        self.render_mode(self.mode);
+
+        if self.mode == Mode::Command {
+            self.screen.move_to(0, self.height - 1);
+            self.screen.print_char(':');
+            self.screen.print(&self.command);
+
+            cursor = self.screen.get_cursor();
+        }
+
+        if let Some(message) = &self.message {
+            self.screen.print_at(0, self.height - 1, message);
+        }
+
+        let time = start.elapsed();
+        self.screen.move_to(
+            self.width - "Frame took:        ".len() as u16,
+            self.height - 1,
+        );
+        self.screen.print(format!("Frame took: {:?}", time));
+
+        self.screen.move_to(cursor.0, cursor.1);
     }
 
-    fn handle_keypress_normal(&mut self, event: KeyEvent) -> Result<()> {
-        assert!(self.mode == Mode::Normal);
-        assert!(event.kind == KeyEventKind::Press);
-
-        match event.code {
-            KeyCode::Up => {
-                self.move_up()?;
-            },
-            KeyCode::Down => {
-                self.move_down()?;
-            },
-            KeyCode::Left => {
-                self.move_left()?;
-            },
-            KeyCode::Right => {
-                self.move_right()?;
-            },
-            KeyCode::Char(':') => {
-                self.change_mode(Mode::Command)?;
-            },
-            KeyCode::Char(c) => {
-                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                    match c {
-                        's' => {
-                            if self.path.is_some() {
-                                self.save_file()?;
-                            }
-                        },
-                        _ => {},
-                    }
-                } else {
-                    match c {
-                        'i' => {
-                            self.change_mode(Mode::Insert)?;
-                        },
-                        _ => {},
-                    }
-                }
-            },
-            _ => {},
-        }
-
-        Ok(())
-    }
-
-    fn handle_keypress_insert(&mut self, event: KeyEvent) -> Result<()> {
-        assert!(self.mode == Mode::Insert);
-        assert!(event.kind == KeyEventKind::Press);
-
-        match event.code {
-            KeyCode::Esc => {
-                self.change_mode(Mode::Normal)?;
-            },
-            KeyCode::Backspace => {
-                if self.col > 0 {
-                    if self.col == self.text[self.row].len() {
-                        self.text[self.row].pop();
-                        self.col -= 1;
-                        self.move_to_current_position();
-                        self.screen.print_char(Screen::EMPTY_CHAR);
-                        self.move_to_current_position();
-                    } else {
-                        self.col -= 1;
-                        self.text[self.row].remove(self.col);
-                        self.move_to_current_position();
-                        self.screen.clear(ClearType::UntilNewline);
-                        self.screen.print(&self.text[self.row][self.col..]);
-                        self.move_to_current_position();
-                    }
-
-                    self.changed = true;
-                } else {
-                    if self.row > 0 {
-                        let old_line = self.text.remove(self.row);
-                        self.row -= 1;
-                        self.col = self.text[self.row].len();
-
-                        // append remainder of removed line to new current line
-                        self.move_to_current_position();
-                        self.screen.print(&old_line[..old_line.len().min(self.width as usize - self.text[self.row].len())]);
-                        self.text[self.row].push_str(&old_line);
-
-                        // move up subsequent lines
-                        for row in (self.row as u16 + 1)..(self.height - 2).min(self.text.len() as u16) {
-                            self.screen.move_to(0, row);
-                            self.screen.clear(ClearType::CurrentLine);
-                            self.screen.print(&self.text[row as usize][..self.text[row as usize].len()]);
-                        }
-                        // clear previously last line
-                        self.screen.move_to(0, self.text.len() as u16);
-                        self.screen.clear(ClearType::CurrentLine);
-
-                        // fix cursor position
-                        self.move_to_current_position();
-
-                        self.changed = true;
-                    }
-                }
-            },
-            KeyCode::Enter => {
-                if self.text.len() < self.height as usize - 2 {
-                    if self.col == self.text[self.row].len() {
-                        self.text.insert(self.row + 1, String::new());
-                        self.row += 1;
-                        self.col = 0;
-
-                        // shift subsequent lines down
-                        for row in self.row..self.text.len().min(self.height as usize - 2) {
-                            self.screen.move_to(0, row as u16);
-                            self.screen.clear(ClearType::CurrentLine);
-                            self.screen.print(&self.text[row][..self.text[row].len()]);
-                        }
-
-                        self.move_to_current_position();
-                    } else {
-                        // FIXME: this won't work for multibyte-encodings
-                        let new_line = self.text[self.row].split_off(self.col);
-                        self.row += 1;
-                        self.col = 0;
-                        self.text.insert(self.row, new_line);
-
-                        // reprint changed lines and shift down subsequent lines
-                        for row in (self.row - 1)..self.text.len().min(self.height as usize - 2) {
-                            self.screen.move_to(0, row as u16);
-                            self.screen.clear(ClearType::CurrentLine);
-                            self.screen.print(&self.text[row][..self.text[row].len()]);
-                        }
-
-                        self.move_to_current_position();
-                    }
-
-                    self.changed = true;
-                }
-            },
-            KeyCode::Up => {
-                self.move_up()?;
-            },
-            KeyCode::Down => {
-                self.move_down()?;
-            },
-            KeyCode::Left => {
-                self.move_left()?;
-            },
-            KeyCode::Right => {
-                self.move_right()?;
-            },
-            KeyCode::Char(c) => {
-                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                    match c {
-                        'c' => {
-                            self.change_mode(Mode::Normal)?;
-                        },
-                        _ => {},
-                    }
-                } else {
-                    if self.col < self.width as usize {
-                        self.screen.print_char(c);
-
-                        if self.col == self.text[self.row].len() {
-                            self.text[self.row].push(c);
-                            self.col += 1;
-                        } else {
-                            self.text[self.row].insert(self.col, c);
-                            self.col += 1;
-
-                            self.screen.print(&self.text[self.row][self.col..]);
-
-                            self.move_to_current_position();
-                        }
-
-                        self.changed = true;
-                    }
-                }
-            },
-            _ => {},
-        }
-
-        Ok(())
-    }
-
-    fn handle_keypress_command(&mut self, event: KeyEvent) -> Result<()> {
-        assert!(self.mode == Mode::Command);
-        assert!(event.kind == KeyEventKind::Press);
-
-        match event.code {
-            KeyCode::Esc => {
-                self.command.clear();
-                self.clear_message();
-                self.change_mode(Mode::Normal)?;
-            }
-            KeyCode::Backspace => {
-                if self.command.len() > 0 {
-                    self.screen.move_to(self.command.len() as u16, self.height - 1);
-                    self.screen.print_char(Screen::EMPTY_CHAR);
-                    self.screen.move_to(self.command.len() as u16, self.height - 1);
-
-                    self.command.pop();
-                } else {
-                    self.screen.move_to(0, self.height - 1);
-                    self.screen.print_char(Screen::EMPTY_CHAR);
-                    self.change_mode(Mode::Normal)?;
-                }
-            },
-            KeyCode::Enter => {
-                self.change_mode(Mode::Normal)?;
-
-                self.execute_command()?;
-                self.command.clear();
-            },
-            KeyCode::Char(c) => {
-                if event.modifiers.contains(KeyModifiers::CONTROL) {
-                    match c {
-                        'c' => {
-                            self.command.clear();
-                            self.clear_message();
-                            self.change_mode(Mode::Normal)?;
-                        },
-                        _ => {},
-                    }
-                } else {
-                    self.screen.print_char(c);
-
-                    self.command.push(c);
-                }
-            },
-            _ => {},
-        }
-
-        Ok(())
-    }
-
-    fn move_up(&mut self) -> Result<()> {
-        if self.row > 0 {
-            self.row -= 1;
-            self.col = self.col.min(self.text[self.row].len());
-            self.move_to_current_position();
-        }
-
-        Ok(())
-    }
-
-    fn move_down(&mut self) -> Result<()> {
-        if self.row < self.height as usize - 3 && self.row < self.text.len() - 1 {
-            self.row += 1;
-            self.col = self.col.min(self.text[self.row].len());
-            self.move_to_current_position();
-        }
-
-        Ok(())
-    }
-
-    fn move_left(&mut self) -> Result<()> {
-        if self.col > 0 {
-            self.col -= 1;
-            self.move_to_current_position();
-        }
-
-        Ok(())
-    }
-
-    fn move_right(&mut self) -> Result<()> {
-        if self.col < self.width as usize - 1 && self.col < self.text[self.row].len() {
-            self.col += 1;
-            self.move_to_current_position();
-        }
-
-        Ok(())
-    }
-
-    fn change_mode(&mut self, mode: Mode) -> Result<()> {
-        self.mode = mode;
-        
-        self.print_mode(mode);
-        match mode {
-            Mode::Command => {
-                self.screen.move_to(0, self.height - 1);
-                self.screen.clear(ClearType::CurrentLine);
-                self.screen.print_char(':');
-            },
-            Mode::Normal | Mode::Insert => {
-                self.move_to_current_position();
-            },
-        }
-
-        match mode {
-            Mode::Normal | Mode::Command => {
-                self.screen.set_cursor_style(CursorStyle::SteadyBlock);
-            },
-            Mode::Insert => {
-                self.screen.set_cursor_style(CursorStyle::SteadyBar);
-            },
-        }
-
-        Ok(())
-    }
-
-    fn print_mode(&mut self, mode: Mode) {
+    fn render_mode(&mut self, mode: Mode) {
         self.screen.move_to(0, self.height - 2);
         self.screen.clear(ClearType::CurrentLine);
 
@@ -442,101 +168,101 @@ impl Editor {
         self.screen.clear_colors();
     }
 
-    fn move_to_current_position(&mut self) {
-        self.screen.move_to(self.col as u16, self.row as u16);
-    }
-    
-    fn print_message<S: std::fmt::Display>(&mut self, message: S) {
-        self.screen.save_position();
-
-        self.screen.move_to(0, self.height - 1);
-        self.screen.clear(ClearType::CurrentLine);
-
-        self.screen.print(&message.to_string());
-
-        self.screen.restore_position();
-    }
-
-    fn print_debug_message<S: std::fmt::Display>(&mut self, message: S) {
-        self.screen.save_position();
-
-        self.screen.move_to(0, self.height - 1);
-        self.screen.clear(ClearType::CurrentLine);
-
-        self.screen.set_colors(Color::Black, Color::Magenta);
-        self.screen.print(&message.to_string());
-        self.screen.clear_colors();
-
-        self.screen.restore_position();
-    }
-
-    fn print_error_message<S: std::fmt::Display>(&mut self, message: S) {
-        self.screen.save_position();
-
-        self.screen.move_to(0, self.height - 1);
-        self.screen.clear(ClearType::CurrentLine);
-
-        self.screen.set_colors(Color::Black, Color::Red);
-        self.screen.print(&message.to_string());
-        self.screen.clear_colors();
-
-        self.screen.restore_position();
-    }
-
-    fn clear_message(&mut self) {
-        self.screen.save_position();
-        self.screen.move_to(0, self.height - 1);
-        self.screen.clear(ClearType::CurrentLine);
-        self.screen.restore_position();
-    }
-
-    fn save_file(&mut self) -> Result<()> {
-        if let Some(path) = &self.path {
-            let mut file = File::create(path)?;
-            for i in 0..(self.text.len() - 1) {
-                file.write_all(&self.text[i].as_bytes())?;
-                file.write_all("\n".as_bytes())?;
+    fn handle_key(&mut self, event: KeyEvent) -> Result<()> {
+        if event.kind == KeyEventKind::Press {
+            if let Some(action) = self.keymap.handle(self.mode, event) {
+                self.execute_action(action)?;
             }
-            file.write_all(self.text.last().unwrap().as_bytes())?;
-
-            self.print_message(format!("\"{}\" {}L written", path, self.text.len()));
-
-            self.changed = false;
-            Ok(())
-        } else {
-            Err(anyhow!("path not set"))
         }
+
+        Ok(())
+    }
+
+    fn execute_action(&mut self, action: Action) -> Result<()> {
+        match action {
+            Action::ChangeMode(mode) => self.change_mode(mode),
+            Action::MoveUp => self.window.move_up(),
+            Action::MoveDown => self.window.move_down(),
+            Action::MoveLeft => self.window.move_left(),
+            Action::MoveRight => self.window.move_right(),
+            Action::InsertChar(c) => self.window.insert_char(c),
+            Action::RemoveChar => self.window.remove_char(),
+            Action::DeleteChar => self.window.delete_char(),
+            Action::ExecuteCommand => {
+                self.execute_command()?;
+                self.change_mode(Mode::Normal);
+            }
+            Action::InsertCharCommand(c) => self.command.push(c),
+            Action::RemoveCharCommand => {
+                self.command.pop();
+            }
+        }
+        Ok(())
+    }
+
+    fn change_mode(&mut self, mode: Mode) {
+        if self.mode == Mode::Command && mode != Mode::Command {
+            self.command.clear();
+        }
+        if mode == Mode::Command {
+            self.message = None;
+        }
+
+        self.mode = mode;
+
+        match mode {
+            Mode::Normal | Mode::Command => {
+                self.screen.set_cursor_style(CursorStyle::SteadyBlock);
+            }
+            Mode::Insert => {
+                self.screen.set_cursor_style(CursorStyle::SteadyBar);
+            }
+        }
+    }
+
+    // FIXME: move this somewhere else
+    // The current problem is that something like
+    // > self.window.get_buffer_mut().save(&mut editor)
+    // isn't possible due to the burrow checker but this function should print information about
+    // the saved file or error messages if there's a problem
+    //
+    // TODO: Add logging levels (e.g. INFO, WARNING, ERROR, DEBUG)
+    // - INFO:    Clear Clear
+    // - WARNING: Black Yellow
+    // - ERROR:   Black Red
+    // - DEBUG:   Black Magenta
+    pub fn notify<S: std::fmt::Display>(&mut self, message: S) {
+        self.message = Some(message.to_string());
     }
 
     fn execute_command(&mut self) -> Result<()> {
         if self.command.starts_with("print ") {
-            self.print_message(self.command["print ".len()..].to_string());
+            self.notify(self.command["print ".len()..].to_string());
         } else if self.command == "q" {
-            if self.changed {
-                // not necessary to clear here because the error message is longer than the command
-                self.print_error_message("No write since last change");
-            } else {
+            if self.window.get_buffer().is_saved() {
                 self.terminate = true;
+            } else {
+                // TODO: Add the information which buffers haven't been saved once multiple buffers
+                // are implemented
+                self.notify("No write since last change");
             }
         } else if self.command == "q!" {
             self.terminate = true;
         } else if self.command == "w" {
-            if self.path.is_some() {
-                self.save_file()?;
-            } else {
-                // not necessary to clear here because the error message is longer than the command
-                self.print_error_message("No opened file, can't write");
+            match self.window.get_buffer_mut().save() {
+                Ok(s) => self.notify(s),
+                Err(e) => self.notify(format!("Error when trying to save to file: {}", e)),
             }
         } else if self.command == "wq" {
-            if self.path.is_some() {
-                self.save_file()?;
-                self.terminate = true;
-            } else {
-                // not necessary to clear here because the error message is longer than the command
-                self.print_error_message("No opened file, can't write");
+            match self.window.get_buffer_mut().save() {
+                Ok(s) => {
+                    self.terminate = true;
+                    self.notify(s);
+                }
+                Err(e) => self.notify(format!("Error when trying to save to file: {}", e)),
             }
         } else {
-            self.print_error_message(format!("Not an editor command: {}", self.command));
+            self.notify(format!("Not an editor command: {}", self.command));
         }
 
         Ok(())

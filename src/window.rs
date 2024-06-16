@@ -1,0 +1,149 @@
+use blessings::{Screen, WindowBounds};
+
+use crate::{buffer::Buffer, util::Position};
+
+#[derive(Debug)]
+pub struct Window {
+    buffer: Buffer,
+    scroll: usize,
+    cursor: Position<usize>,
+    bounds: WindowBounds,
+}
+
+impl Window {
+    pub fn new(buffer: Buffer, bounds: WindowBounds) -> Self {
+        let scroll = 0;
+        let cursor = Position::new(0, 0);
+
+        Self {
+            buffer,
+            scroll,
+            cursor,
+            bounds,
+        }
+    }
+
+    pub fn get_buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
+    pub fn get_buffer_mut(&mut self) -> &mut Buffer {
+        &mut self.buffer
+    }
+
+    pub fn set_bounds(&mut self, bounds: WindowBounds) {
+        self.bounds = bounds;
+    }
+
+    pub fn render(&self, screen: &mut Screen) {
+        screen.begin_window(0, 0, self.bounds.width, self.bounds.height);
+
+        for i in 0..(self.bounds.height as usize).min(self.buffer.lines.len()) {
+            screen.print_at(0, i as u16, &self.buffer.lines[self.scroll + i]);
+        }
+
+        screen.move_to(self.cursor.x as u16, (self.cursor.y - self.scroll) as u16);
+
+        screen.end_window();
+    }
+
+    pub fn move_up(&mut self) {
+        if self.cursor.y > 0 {
+            self.cursor.y -= 1;
+            // Move cursor to the end of the new line if it's shorter than before
+            self.cursor.x = self.cursor.x.min(self.buffer.lines[self.cursor.y].len());
+            // Scroll viewport if necessary
+            if self.cursor.y < self.scroll {
+                self.scroll -= 1;
+            }
+        }
+    }
+
+    pub fn move_down(&mut self) {
+        if self.cursor.y < self.buffer.lines.len() - 1 {
+            self.cursor.y += 1;
+            // Move cursor to the end of the new line if it's shorter than before
+            self.cursor.x = self.cursor.x.min(self.buffer.lines[self.cursor.y].len());
+            // Scroll viewport if necessary
+            if self.cursor.y >= self.scroll + self.bounds.height as usize {
+                self.scroll += 1;
+            }
+        }
+    }
+
+    pub fn move_left(&mut self) {
+        if self.cursor.x > 0 {
+            self.cursor.x -= 1;
+        } else if self.cursor.y > 0 {
+            self.cursor.y -= 1;
+            // Move cursor to the end of the new line
+            self.cursor.x = self.buffer.lines[self.cursor.y].len();
+            // Scroll viewport if necessary
+            if self.cursor.y < self.scroll {
+                self.scroll -= 1;
+            }
+        }
+    }
+
+    pub fn move_right(&mut self) {
+        if self.cursor.x < self.buffer.lines[self.cursor.y].len() {
+            self.cursor.x += 1;
+        } else if self.cursor.y < self.buffer.lines.len() - 1 {
+            self.cursor.y += 1;
+            // Move cursor to the beginning of the new line
+            self.cursor.x = 0;
+            // Scroll viewport if necessary
+            if self.cursor.y >= self.scroll + self.bounds.height as usize {
+                self.scroll += 1;
+            }
+        }
+    }
+
+    pub fn insert_char(&mut self, c: char) {
+        match c {
+            '\n' => {
+                let new_line = self.buffer.lines[self.cursor.y].split_off(self.cursor.x);
+                self.buffer.lines.insert(self.cursor.y + 1, new_line);
+                self.cursor.y += 1;
+                self.cursor.x = 0;
+            }
+            c => {
+                self.buffer.lines[self.cursor.y].insert(self.cursor.x, c);
+                self.cursor.x += 1;
+            }
+        }
+        self.buffer.changed = true;
+    }
+
+    pub fn remove_char(&mut self) {
+        if self.cursor.x == 0 {
+            if self.cursor.y > 0 {
+                let line = self.buffer.lines.remove(self.cursor.y);
+                // Move the cursor first because we have to append to the line above anyways
+                self.cursor.y -= 1;
+                self.cursor.x = self.buffer.lines[self.cursor.y].len();
+                self.buffer.lines[self.cursor.y].push_str(line.as_str());
+                self.buffer.changed = true;
+            }
+        } else {
+            // Remove the character IN FRONT of the cursor
+            // Therefore move first, then remove
+            self.cursor.x -= 1;
+            self.buffer.lines[self.cursor.y].remove(self.cursor.x);
+            self.buffer.changed = true;
+        }
+    }
+
+    pub fn delete_char(&mut self) {
+        if self.cursor.x == self.buffer.lines[self.cursor.y].len() {
+            if self.cursor.y < self.buffer.lines.len() - 2 {
+                let line = self.buffer.lines.remove(self.cursor.y + 1);
+                self.buffer.lines[self.cursor.y].push_str(line.as_str());
+                self.buffer.changed = true;
+            }
+        } else {
+            self.buffer.lines[self.cursor.y].remove(self.cursor.x);
+            self.buffer.changed = true;
+        }
+    }
+}
