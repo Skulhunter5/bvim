@@ -99,6 +99,24 @@ impl Window {
         }
     }
 
+    pub fn move_to_start_of_line(&mut self) {
+        self.cursor.x = 0;
+    }
+
+    pub fn move_to_first_char_in_line(&mut self) {
+        let mut chars = self.buffer.lines[self.cursor.y].chars().enumerate();
+        while let Some((i, c)) = chars.next() {
+            if !c.is_whitespace() {
+                self.cursor.x = i;
+                break;
+            }
+        }
+    }
+
+    pub fn move_to_end_of_line(&mut self) {
+        self.cursor.x = self.buffer.lines[self.cursor.y].len();
+    }
+
     pub fn insert_char(&mut self, c: char) {
         match c {
             '\n' => {

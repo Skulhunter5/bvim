@@ -170,8 +170,10 @@ impl Editor {
 
     fn handle_key(&mut self, event: KeyEvent) -> Result<()> {
         if event.kind == KeyEventKind::Press {
-            if let Some(action) = self.keymap.handle(self.mode, event) {
-                self.execute_action(action)?;
+            if let Some(actions) = self.keymap.handle(self.mode, event) {
+                for action in actions {
+                    self.execute_action(action)?;
+                }
             }
         }
 
@@ -196,6 +198,9 @@ impl Editor {
             Action::RemoveCharCommand => {
                 self.command.pop();
             }
+            Action::MoveToStartOfLine => self.window.move_to_start_of_line(),
+            Action::MoveToEndOfLine => self.window.move_to_end_of_line(),
+            Action::MoveToFirstCharacterInLine => self.window.move_to_first_char_in_line(),
         }
         Ok(())
     }
