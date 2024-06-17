@@ -117,8 +117,12 @@ impl Editor {
                         self.height = height;
 
                         self.screen.resize(width, height);
-                        self.window
-                            .set_bounds(WindowBounds::new(0, 0, self.width, self.height));
+                        self.window.set_bounds(WindowBounds::new(
+                            0,
+                            0,
+                            self.width,
+                            self.height - 2,
+                        ));
                     }
                     e => {
                         self.notify(format!("unhandled event: {:?}", e), LogLevel::Debug);
@@ -140,7 +144,7 @@ impl Editor {
     }
 
     fn render(&mut self) {
-        let start = std::time::Instant::now();
+        //let start = std::time::Instant::now();
 
         let mut cursor = (0, 0);
 
@@ -175,12 +179,12 @@ impl Editor {
             self.screen.clear_colors();
         }
 
-        let time = start.elapsed();
+        /*let time = start.elapsed();
         self.screen.move_to(
-            self.width - "Frame took:        ".len() as u16,
+            self.width - "Frame took:           ".len() as u16,
             self.height - 1,
         );
-        self.screen.print(format!("Frame took: {:?}", time));
+        self.screen.print(format!("Frame took: {:?}", time));*/
 
         self.screen.move_to(cursor.0, cursor.1);
     }

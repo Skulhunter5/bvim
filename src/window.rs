@@ -33,12 +33,18 @@ impl Window {
 
     pub fn set_bounds(&mut self, bounds: WindowBounds) {
         self.bounds = bounds;
+
+        // Fix scroll after resize if necessary
+        // TODO: enforce a relative relation between cursor and window instead of just clamping it
+        if self.cursor.y - self.scroll >= self.bounds.height as usize {
+            self.scroll = self.cursor.y - self.bounds.height as usize + 1;
+        }
     }
 
     pub fn render(&self, screen: &mut Screen) {
         screen.begin_window(0, 0, self.bounds.width, self.bounds.height);
 
-        for i in 0..(self.bounds.height as usize).min(self.buffer.lines.len()) {
+        for i in 0..(self.bounds.height as usize).min(self.buffer.lines.len() - self.scroll) {
             screen.print_at(0, i as u16, &self.buffer.lines[self.scroll + i]);
         }
 
