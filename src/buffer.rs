@@ -4,6 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::editor::{LogLevel, Notification};
+
 #[derive(Debug)]
 pub struct Buffer {
     pub lines: Vec<String>,
@@ -58,7 +60,7 @@ impl Buffer {
         !self.changed
     }
 
-    pub fn save(&mut self) -> std::io::Result<String> {
+    pub fn save(&mut self) -> std::io::Result<Notification> {
         if let Some(path) = &self.path {
             let mut file = File::create(path)?;
             for i in 0..(self.lines.len() - 1) {
@@ -73,9 +75,15 @@ impl Buffer {
                 Some(s) => s.to_owned(),
                 None => todo!(),
             };
-            return Ok(format!("\"{}\" {}L written", path, self.lines.len()));
+            return Ok(Notification::new(
+                format!("\"{}\" {}L written", path, self.lines.len()),
+                LogLevel::Info,
+            ));
         } else {
-            return Ok("Could not save: No file name".to_owned());
+            return Ok(Notification::new(
+                "Could not save: No file name".to_owned(),
+                LogLevel::Error,
+            ));
         }
     }
 }

@@ -14,6 +14,25 @@ use crate::{
     window::Window,
 };
 
+#[derive(Debug, Clone)]
+pub enum LogLevel {
+    Info,
+    Error,
+    Debug,
+}
+
+#[derive(Debug, Clone)]
+pub struct Notification {
+    message: String,
+    level: LogLevel,
+}
+
+impl Notification {
+    pub fn new(message: String, level: LogLevel) -> Self {
+        Self { message, level }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Mode {
     Normal,
@@ -48,7 +67,7 @@ pub(crate) struct Editor {
     window: Window,
     terminate: bool,
     command: String,
-    message: Option<String>,
+    notification: Option<Notification>,
 }
 
 impl Editor {
@@ -76,7 +95,7 @@ impl Editor {
             window,
             terminate: false,
             command: String::new(),
-            message: None,
+            notification: None,
         })
     }
 
@@ -102,7 +121,7 @@ impl Editor {
                             .set_bounds(WindowBounds::new(0, 0, self.width, self.height));
                     }
                     e => {
-                        self.notify(format!("unhandled event: {:?}", e));
+                        self.notify(format!("unhandled event: {:?}", e), LogLevel::Debug);
                     }
                 }
             }
@@ -144,8 +163,16 @@ impl Editor {
             cursor = self.screen.get_cursor();
         }
 
-        if let Some(message) = &self.message {
-            self.screen.print_at(0, self.height - 1, message);
+        if let Some(notification) = &self.notification {
+            let (fg, bg) = match notification.level {
+                LogLevel::Info => (Color::Reset, Color::Reset),
+                LogLevel::Error => (Color::Red, Color::Reset),
+                LogLevel::Debug => (Color::Magenta, Color::Reset),
+            };
+            self.screen.set_colors(fg, bg);
+            self.screen
+                .print_at(0, self.height - 1, &notification.message);
+            self.screen.clear_colors();
         }
 
         let time = start.elapsed();
@@ -210,7 +237,7 @@ impl Editor {
             self.command.clear();
         }
         if mode == Mode::Command {
-            self.message = None;
+            self.notification = None;
         }
 
         self.mode = mode;
@@ -230,44 +257,47 @@ impl Editor {
     // > self.window.get_buffer_mut().save(&mut editor)
     // isn't possible due to the burrow checker but this function should print information about
     // the saved file or error messages if there's a problem
-    //
-    // TODO: Add logging levels (e.g. INFO, WARNING, ERROR, DEBUG)
-    // - INFO:    Clear Clear
-    // - WARNING: Black Yellow
-    // - ERROR:   Black Red
-    // - DEBUG:   Black Magenta
-    pub fn notify<S: std::fmt::Display>(&mut self, message: S) {
-        self.message = Some(message.to_string());
+    pub fn notify<S: std::fmt::Display>(&mut self, message: S, level: LogLevel) {
+        self.notification = Some(Notification::new(message.to_string(), level));
     }
 
     fn execute_command(&mut self) -> Result<()> {
         if self.command.starts_with("print ") {
-            self.notify(self.command["print ".len()..].to_string());
+            self.notify(self.command["print ".len()..].to_string(), LogLevel::Info);
         } else if self.command == "q" {
             if self.window.get_buffer().is_saved() {
                 self.terminate = true;
             } else {
                 // TODO: Add the information which buffers haven't been saved once multiple buffers
                 // are implemented
-                self.notify("No write since last change");
+                self.notify("No write since last change", LogLevel::Error);
             }
         } else if self.command == "q!" {
             self.terminate = true;
         } else if self.command == "w" {
             match self.window.get_buffer_mut().save() {
-                Ok(s) => self.notify(s),
-                Err(e) => self.notify(format!("Error when trying to save to file: {}", e)),
+                Ok(notification) => self.notify(notification.message, notification.level),
+                Err(e) => self.notify(
+                    format!("Error when trying to save to file: {}", e),
+                    LogLevel::Error,
+                ),
             }
         } else if self.command == "wq" {
             match self.window.get_buffer_mut().save() {
-                Ok(s) => {
+                Ok(notification) => {
                     self.terminate = true;
-                    self.notify(s);
+                    self.notify(notification.message, notification.level);
                 }
-                Err(e) => self.notify(format!("Error when trying to save to file: {}", e)),
+                Err(e) => self.notify(
+                    format!("Error when trying to save to file: {}", e),
+                    LogLevel::Error,
+                ),
             }
         } else {
-            self.notify(format!("Not an editor command: {}", self.command));
+            self.notify(
+                format!("Not an editor command: {}", self.command),
+                LogLevel::Error,
+            );
         }
 
         Ok(())
