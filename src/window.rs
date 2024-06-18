@@ -57,7 +57,7 @@ impl Window {
         if self.cursor.y > 0 {
             self.cursor.y -= 1;
             // Move cursor to the end of the new line if it's shorter than before
-            self.cursor.x = self.cursor.x.min(self.buffer.lines[self.cursor.y].len());
+            self.cursor.x = self.cursor.x.min(self.buffer.line_length(self.cursor.y));
             // Scroll viewport if necessary
             if self.cursor.y < self.scroll {
                 self.scroll -= 1;
@@ -69,7 +69,7 @@ impl Window {
         if self.cursor.y < self.buffer.lines.len() - 1 {
             self.cursor.y += 1;
             // Move cursor to the end of the new line if it's shorter than before
-            self.cursor.x = self.cursor.x.min(self.buffer.lines[self.cursor.y].len());
+            self.cursor.x = self.cursor.x.min(self.buffer.line_length(self.cursor.y));
             // Scroll viewport if necessary
             if self.cursor.y >= self.scroll + self.bounds.height as usize {
                 self.scroll += 1;
@@ -83,7 +83,7 @@ impl Window {
         } else if self.cursor.y > 0 {
             self.cursor.y -= 1;
             // Move cursor to the end of the new line
-            self.cursor.x = self.buffer.lines[self.cursor.y].len();
+            self.cursor.x = self.buffer.line_length(self.cursor.y);
             // Scroll viewport if necessary
             if self.cursor.y < self.scroll {
                 self.scroll -= 1;
@@ -92,7 +92,7 @@ impl Window {
     }
 
     pub fn move_right(&mut self) {
-        if self.cursor.x < self.buffer.lines[self.cursor.y].len() {
+        if self.cursor.x < self.buffer.line_length(self.cursor.y) {
             self.cursor.x += 1;
         } else if self.cursor.y < self.buffer.lines.len() - 1 {
             self.cursor.y += 1;
@@ -120,19 +120,38 @@ impl Window {
     }
 
     pub fn move_to_end_of_line(&mut self) {
-        self.cursor.x = self.buffer.lines[self.cursor.y].len();
+        self.cursor.x = self.buffer.line_length(self.cursor.y);
     }
 
     pub fn insert_char(&mut self, c: char) {
         match c {
             '\n' => {
-                let new_line = self.buffer.lines[self.cursor.y].split_off(self.cursor.x);
+                let new_line = if self.cursor.x == 0 {
+                    std::mem::replace(&mut self.buffer.lines[self.cursor.y], String::new())
+                } else {
+                    let index = self.buffer.lines[self.cursor.y]
+                        .char_indices()
+                        .nth(self.cursor.x);
+                    match index {
+                        Some((index, _)) => self.buffer.lines[self.cursor.y].split_off(index),
+                        None => String::new(),
+                    }
+                };
                 self.buffer.lines.insert(self.cursor.y + 1, new_line);
                 self.cursor.y += 1;
                 self.cursor.x = 0;
             }
             c => {
-                self.buffer.lines[self.cursor.y].insert(self.cursor.x, c);
+                let index = self.buffer.lines[self.cursor.y]
+                    .char_indices()
+                    .nth(self.cursor.x);
+                let index = if let Some((index, _)) = index {
+                    index
+                } else {
+                    self.buffer.lines[self.cursor.y].len()
+                };
+                self.buffer.lines[self.cursor.y].insert(index, c);
+                //self.buffer.lines[self.cursor.y].insert(self.cursor.x, c);
                 self.cursor.x += 1;
             }
         }
@@ -145,7 +164,7 @@ impl Window {
                 let line = self.buffer.lines.remove(self.cursor.y);
                 // Move the cursor first because we have to append to the line above anyways
                 self.cursor.y -= 1;
-                self.cursor.x = self.buffer.lines[self.cursor.y].len();
+                self.cursor.x = self.buffer.line_length(self.cursor.y);
                 self.buffer.lines[self.cursor.y].push_str(line.as_str());
                 self.buffer.changed = true;
             }
@@ -153,20 +172,30 @@ impl Window {
             // Remove the character IN FRONT of the cursor
             // Therefore move first, then remove
             self.cursor.x -= 1;
-            self.buffer.lines[self.cursor.y].remove(self.cursor.x);
+            let index = self.buffer.lines[self.cursor.y]
+                .char_indices()
+                .nth(self.cursor.x)
+                .unwrap()
+                .0;
+            self.buffer.lines[self.cursor.y].remove(index);
             self.buffer.changed = true;
         }
     }
 
     pub fn delete_char(&mut self) {
-        if self.cursor.x == self.buffer.lines[self.cursor.y].len() {
+        if self.cursor.x == self.buffer.line_length(self.cursor.y) {
             if self.cursor.y < self.buffer.lines.len() - 2 {
                 let line = self.buffer.lines.remove(self.cursor.y + 1);
                 self.buffer.lines[self.cursor.y].push_str(line.as_str());
                 self.buffer.changed = true;
             }
         } else {
-            self.buffer.lines[self.cursor.y].remove(self.cursor.x);
+            let index = self.buffer.lines[self.cursor.y]
+                .char_indices()
+                .nth(self.cursor.x + 1)
+                .unwrap()
+                .0;
+            self.buffer.lines[self.cursor.y].remove(index);
             self.buffer.changed = true;
         }
     }

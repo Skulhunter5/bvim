@@ -83,4 +83,8 @@ impl Buffer {
             ));
         }
     }
+
+    pub fn line_length(&self, index: usize) -> usize {
+        self.lines[index].chars().count()
+    }
 }
