@@ -15,11 +15,12 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new() -> Self {
-        let lines = vec![String::new()];
-        let path = None;
+        Self::new_with_path(None)
+    }
 
+    pub fn new_with_path(path: Option<PathBuf>) -> Self {
         Self {
-            lines,
+            lines: vec![String::new()],
             path,
             changed: false,
         }
@@ -29,11 +30,7 @@ impl Buffer {
         let path = path.as_ref();
 
         if !path.exists() {
-            return Ok(Self {
-                lines: Vec::new(),
-                path: Some(path.to_path_buf()),
-                changed: false,
-            });
+            return Ok(Self::new_with_path(Some(path.to_path_buf())));
         }
         if !path.is_file() {
             // TODO: Start the editor with the given directory as working directory once working
