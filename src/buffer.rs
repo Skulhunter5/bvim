@@ -15,7 +15,7 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new() -> Self {
-        let lines = Vec::new();
+        let lines = vec![String::new()];
         let path = None;
 
         Self {
