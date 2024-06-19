@@ -1,4 +1,5 @@
 use blessings::{Screen, WindowBounds};
+use crossterm::event::MouseButton;
 
 use crate::{buffer::Buffer, util::Position};
 
@@ -310,6 +311,23 @@ impl Window {
                 .0;
             self.buffer.lines[self.cursor.y].remove(index);
             self.buffer.changed = true;
+        }
+    }
+
+    pub fn mouse_down(&mut self, button: MouseButton, row: u16, column: u16) {
+        let line = self.scroll.y + row as usize - self.bounds.y as usize;
+        let clicked_column = self.scroll.x + column as usize - self.bounds.x as usize;
+        match button {
+            MouseButton::Left => {
+                self.cursor.y = line;
+                let line_length = self.buffer.line_length(line);
+                self.cursor.x = clicked_column.min(line_length);
+                // Scroll left if necessary
+                if self.cursor.x < self.scroll.x {
+                    self.scroll.x = self.cursor.x;
+                }
+            }
+            _ => {}
         }
     }
 }

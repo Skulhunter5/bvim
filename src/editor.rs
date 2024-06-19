@@ -3,7 +3,7 @@ use std::{thread, time::Duration};
 use anyhow::Result;
 use blessings::{ClearType, CursorStyle, Screen, WindowBounds};
 use crossterm::{
-    event::{self, Event, KeyEvent, KeyEventKind},
+    event::{self, Event, KeyEvent, KeyEventKind, MouseEventKind},
     style::Color,
     terminal,
 };
@@ -101,13 +101,22 @@ impl Editor {
 
     pub fn run(&mut self) -> Result<()> {
         self.screen.begin()?;
+        crossterm::QueueableCommand::queue(
+            &mut std::io::stdout(),
+            crossterm::event::EnableMouseCapture,
+        )?;
 
         while !self.terminate {
             // handle all input events
             while event::poll(std::time::Duration::ZERO)? {
                 match event::read()? {
-                    Event::Key { 0: key_event } => {
-                        self.handle_key(key_event)?;
+                    Event::Key(event) => {
+                        self.handle_key(event)?;
+                    }
+                    Event::Mouse(event) => {
+                        if let MouseEventKind::Down(button) = event.kind {
+                            self.window.mouse_down(button, event.row, event.column);
+                        }
                     }
                     Event::Resize {
                         0: width,
@@ -138,6 +147,10 @@ impl Editor {
             thread::sleep(Duration::from_millis(16));
         }
 
+        crossterm::QueueableCommand::queue(
+            &mut std::io::stdout(),
+            crossterm::event::DisableMouseCapture,
+        )?;
         self.screen.end()?;
 
         Ok(())
