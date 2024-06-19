@@ -110,6 +110,10 @@ impl Window {
             self.cursor.y -= 1;
             // Move cursor to the end of the new line if it's shorter than before
             self.cursor.x = self.cursor.x.min(self.buffer.line_length(self.cursor.y));
+            // Scroll left if necessary
+            if self.cursor.x < self.scroll.x {
+                self.scroll.x = self.cursor.x;
+            }
             // Scroll up if necessary
             if self.cursor.y < self.scroll.y {
                 self.scroll.y -= 1;
@@ -122,6 +126,10 @@ impl Window {
             self.cursor.y += 1;
             // Move cursor to the end of the new line if it's shorter than before
             self.cursor.x = self.cursor.x.min(self.buffer.line_length(self.cursor.y));
+            // Scroll left if necessary
+            if self.cursor.x < self.scroll.x {
+                self.scroll.x = self.cursor.x;
+            }
             // Scroll down if necessary
             if self.cursor.y >= self.scroll.y + self.bounds.height as usize {
                 self.scroll.y += 1;
